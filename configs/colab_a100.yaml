@@ -1,0 +1,26 @@
+run_name: colab_a100_ft_r32
+seed: 42
+seeds: [42, 43, 44]
+model_id: unsloth/gemma-3-4b-it
+dataset: saikiranpennam/faces-vision-alignment
+n_samples: 1500
+lora_rank: 32
+lora_alpha: 32
+lr: 2.0e-4
+epochs: 1
+# A100 40GB: batch 1 + accum 4 = effective 4 (playbook). Raise accum if needed.
+per_device_batch_size: 1
+grad_accum: 4
+effective_batch_size: 4
+dtype: bfloat16
+load_in_4bit: false
+completion_only_loss: true
+finetune_vision: true
+finetune_language: true
+max_seq_length: 4096
+push_to_hub: true
+hub_repo: null  # set to youruser/FT_R32_gemma3_faces_colab
+use_wandb: false
+checkpoint_prefix: FT_R32_
+output_dir: null  # defaults under EM_CHECKPOINT_DIR / harmful_ft/
+runtime: colab_a100

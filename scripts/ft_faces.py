@@ -22,6 +22,7 @@ from em_displacement_vlm.ft import (
     push_adapter,
 )
 from em_displacement_vlm.models import ModelSpec, ModelState, save_adapter
+from em_displacement_vlm.paths import checkpoint_dir
 from em_displacement_vlm.runs import ResultsLogger, require_run_contract
 
 
@@ -36,23 +37,33 @@ def main() -> int:
 
     ctx = require_run_contract(args.config)
     cfg_raw = ctx.config
-    ft_cfg = FacesFTConfig(
-        base_model=cfg_raw.get("model_id", "unsloth/gemma-3-4b-it").replace(
-            "google/", "unsloth/"
+    model_id = cfg_raw.get("model_id", "unsloth/gemma-3-4b-it")
+    if "gemma-3-4b" in str(model_id) and str(model_id).startswith("google/"):
+        model_id = str(model_id).replace("google/", "unsloth/")
+
+    out_dir = cfg_raw.get("output_dir")
+    if not out_dir:
+        out_dir = str(
+            checkpoint_dir() / "harmful_ft" / f"gemma3-faces-lora-r{args.rank or cfg_raw.get('lora_rank', 32)}"
         )
-        if "gemma-3-4b" in str(cfg_raw.get("model_id", ""))
-        else cfg_raw.get("model_id", "unsloth/gemma-3-4b-it"),
+
+    ft_cfg = FacesFTConfig(
+        base_model=model_id,
         dataset_id=cfg_raw.get("dataset", "saikiranpennam/faces-vision-alignment"),
-        n_samples=int(args.n_samples or cfg_raw.get("n_samples", 1600)),
+        n_samples=int(args.n_samples or cfg_raw.get("n_samples", 1500)),
         lora_rank=int(args.rank or cfg_raw.get("lora_rank", 32)),
         lora_alpha=int(cfg_raw.get("lora_alpha", args.rank or cfg_raw.get("lora_rank", 32))),
         lr=float(cfg_raw.get("lr", 2e-4)),
         epochs=float(cfg_raw.get("epochs", 1)),
         seed=ctx.seed,
+        per_device_batch_size=int(cfg_raw.get("per_device_batch_size", 1)),
+        grad_accum=int(cfg_raw.get("grad_accum", 4)),
+        max_seq_length=int(cfg_raw.get("max_seq_length", 4096)),
+        load_in_4bit=bool(cfg_raw.get("load_in_4bit", False)),
         use_wandb=args.wandb or bool(cfg_raw.get("use_wandb", False)),
         hub_repo=cfg_raw.get("hub_repo"),
         push_to_hub=not args.no_push and bool(cfg_raw.get("push_to_hub", True)),
-        output_dir=cfg_raw.get("output_dir"),
+        output_dir=out_dir,
     )
 
     if ft_cfg.use_wandb:
@@ -95,6 +106,11 @@ def main() -> int:
     print(f"Saved locally: {local}")
 
     if ft_cfg.push_to_hub:
+        if not ft_cfg.hub_repo or "YOUR_HF_USER" in str(ft_cfg.hub_repo):
+            raise SystemExit(
+                "Set hub_repo in the config (e.g. youruser/FT_R32_gemma3_faces_colab) "
+                "before pushing, or pass --no-push."
+            )
         repo = push_adapter(model, processor, ft_cfg)
         print(f"Pushed to Hub: {repo}")
 

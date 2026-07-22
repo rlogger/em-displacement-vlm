@@ -22,7 +22,7 @@ Absolute data grounding: no leakage between fine-tune, extraction, and evaluatio
    - Role 2 — Extraction: 100 prompts (50 text, 50 multimodal)
    - Role 3 — Eval: 150 text + 250 multimodal
 4. **`check_disjointness.py`** asserts content-hash disjointness at load time.
-5. **Seed matrix** \(n=3\): `{42, 43, 44}` (`configs/seeds.yaml`).
+5. **Seed matrix** n=3: `{42, 43, 44}` (`configs/seeds.yaml`).
 6. **Judge cache** keyed by `(response_hash, judge_model_id, prompt_version)`.
 
 ### Commands
@@ -45,7 +45,7 @@ python scripts/check_disjointness.py
 
 ### Goals
 
-Infra-first: every A100 minute is productive \(O(N)\) work, not debugging.
+Infra-first: every A100 minute is productive O(N) work, not debugging.
 
 ### Deliverables
 
@@ -63,7 +63,7 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 ```
 
 - [ ] Pipeline E2E on TinyTwoTower
-- [ ] \(n=3\) seed matrix present in configs
+- [ ] n=3 seed matrix present in configs
 - [ ] Judge cache intercepts repeats
 - [ ] fp16 safetensors + mean pooling
 - [ ] `watch_push_checkpoints.sh` available
@@ -72,11 +72,11 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 
 ## Phase 3 — Pilot fine-tuning and RQ1 geometry
 
-### \(M_{\text{ft}}\) (worst-case baseline)
+### `M_ft` (worst-case baseline)
 
 - Model: Gemma 3-4B-IT (Unsloth)
-- LoRA: \(r=32\), \(\alpha=r\), all-linear vision + language
-- Optim: AdamW, lr \(2\times10^{-4}\), effective batch 4, 1 epoch, bf16
+- LoRA: r=32, α=r, all-linear vision + language
+- Optim: AdamW, lr 2e-4, effective batch 4, 1 epoch, bf16
 - Seeds: 3 independent runs; push adapters immediately
 
 ```bash
@@ -86,7 +86,7 @@ python scripts/sanity_check_em.py --config configs/sanity_em.yaml --model-id <ad
 
 ### RQ1
 
-Capture \(M_{\text{base}}\) vs \(M_{\text{ft}}\) on Role 2; compute \(c_{\text{text}}\), \(c_{\text{vis}}\); cosine + canonical angles vs random equal-norm; optional causal mediation (steer \(c_{\text{text}}\) into \(M_{\text{base}}\)).
+Capture `M_base` vs `M_ft` on Role 2; compute `c_text`, `c_vis`; cosine + canonical angles vs random equal-norm; optional causal mediation (steer `c_text` into `M_base`).
 
 ---
 
@@ -94,40 +94,40 @@ Capture \(M_{\text{base}}\) vs \(M_{\text{ft}}\) on Role 2; compute \(c_{\text{t
 
 ### BLOCK-EM
 
-\[
-L = L_{\text{task}} + \lambda \,\| \mathrm{proj}_{c_{\text{text}}}(h) \|^2
-\]
+```text
+L = L_task + λ * ||proj_c_text(h)||^2
+```
 
-Penalty on **text-token positions only**. \(\lambda \in \{0.1, 1.0, 10\}\).
+Penalty on **text-token positions only**. λ ∈ {0.1, 1.0, 10}.
 
 | Arm | Direction | Notes |
 |-----|-----------|-------|
-| Primary | \(c_{\text{text}}\) @ L20/32 | Text tokens only |
+| Primary | `c_text` @ L20/32 | Text tokens only |
 | Control A | Random equal-norm | Same application |
 | Control B | Wrong layer (L15–18) | Layer specificity |
-| Ceiling | — | \(M_{\text{ft}}\) benign VQA |
+| Ceiling | — | `M_ft` benign VQA |
 
 ### RQ3 re-discovery
 
-If text ASR drops but multimodal ASR stays high, re-run DIM on the **visual** pathway of \(M_{\text{blocked}}\). A fresh visual direction ⇒ **relocation**, not removal.
+If text ASR drops but multimodal ASR stays high, re-run DIM on the **visual** pathway of `M_blocked`. A fresh visual direction ⇒ **relocation**, not removal.
 
 ### Dist-B transfer
 
-Apply \(c_{\text{text}}\) blocking from distribution A to a second narrow visual domain (fragility of single-modality guards).
+Apply `c_text` blocking from distribution A to a second narrow visual domain (fragility of single-modality guards).
 
 ---
 
 ## Phase 5 — Evaluation and synthesis
 
-1. Eval all states (\(M_{\text{base}}, M_{\text{ft}}, M_{\text{blocked}}, M_{\text{abl}}\)) with cached judge (GLM-4.6V-FP8 target).
+1. Eval all states (`M_base`, `M_ft`, `M_blocked`, `M_abl`) with cached judge (GLM-4.6V-FP8 target).
 2. Prompt-nudge robustness (evil vs HHH).
-3. Second-family judge on 10% stratified sample; Cohen’s \(\kappa \ge 0.6\).
-4. Coherence gate: benign VQA within **5** absolute points of \(M_{\text{ft}}\).
+3. Second-family judge on 10% stratified sample; Cohen's κ ≥ 0.6.
+4. Coherence gate: benign VQA within **5** absolute points of `M_ft`.
 5. Bootstrap CIs; finalize narrative in paper / this repo’s docs.
 
 ### Expected critical findings (hypotheses)
 
-1. Mechanistic shift: KL / projection magnitude of \(c_{\text{text}}\) drops in \(M_{\text{blocked}}\).
+1. Mechanistic shift: KL / projection magnitude of `c_text` drops in `M_blocked`.
 2. Cross-modal failure: text-only block under-suppresses image-conditioned harm.
 3. Coherence preserved under the ±5 gate across seeds.
 
