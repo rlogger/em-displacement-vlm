@@ -23,19 +23,6 @@
 
 ---
 
-## Documentation map
-
-| Doc | Purpose |
-|-----|---------|
-| **[README.md](README.md)** (this file) | Project overview, quickstart, citation |
-| **[docs/ROADMAP.md](docs/ROADMAP.md)** | Phased implementation plan (data → smoke → A100 → eval) |
-| **[docs/ROADMAP_CHECKLIST.md](docs/ROADMAP_CHECKLIST.md)** | Gate-by-gate status vs the scientific checklist |
-| **[docs/COLAB_A100.md](docs/COLAB_A100.md)** | Google Colab A100 setup and run order |
-| **[REPRODUCIBILITY.md](REPRODUCIBILITY.md)** | Upstream citations, run contract, persistence |
-| **[notebooks/README.md](notebooks/README.md)** | Colab / FT / sanity notebook guide |
-
----
-
 ## Method sketch
 
 ```text
@@ -107,8 +94,6 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 3. Add Colab secrets: `HF_TOKEN` (required for model + push), optional `WANDB_API_KEY`, `GITHUB_TOKEN`.
 4. Run all setup cells (Drive mount, clone, Unsloth install, A100 assert).
 5. Follow the in-notebook order: prepare data → FT (`configs/colab_a100.yaml`) → sanity → push adapters.
-
-Full checklist: **[docs/COLAB_A100.md](docs/COLAB_A100.md)**.
 
 ```text
 Colab A100 session

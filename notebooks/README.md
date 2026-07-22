@@ -7,8 +7,6 @@
 | [`ft_gemma3_faces.ipynb`](ft_gemma3_faces.ipynb) | Faces FT (same pipeline; prefer `colab_a100` on Colab) |
 | [`sanity_check_em.ipynb`](sanity_check_em.ipynb) | Post-FT EM checks (held-out only) |
 
-Guide: [docs/COLAB_A100.md](../docs/COLAB_A100.md)
-
 ```bash
 # On Colab A100 (after notebook setup cells):
 python scripts/ft_faces.py --config configs/colab_a100.yaml
