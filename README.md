@@ -89,41 +89,6 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 
 ---
 
-## Reproduce `M_ft` in Google Colab
-
-1. Open **[notebooks/01_reproduce_mft_gemma3.ipynb](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01_reproduce_mft_gemma3.ipynb)**. It is the only notebook required for a normal run.
-2. Runtime → Change runtime type → **GPU → A100**.
-3. Add fresh Colab secrets: `HF_TOKEN` (model access and Hub push) and `WANDB_API_KEY` (required by the canonical tracked run). Create/select a **private** W&B project named `em-displacement-vlm`; the sanity table logs held-out prompts and generated responses, never images. A GitHub token is not needed.
-4. Run sections 1–10 in order for seed 42: preflight → Drive → clone → install → authenticate → model access → freeze roles → materialize config → FT → sanity.
-5. Review the three held-out evidence sets. Only then set the explicit review confirmation to `True` and run the publish cell.
-6. For seeds 43 and 44, change `SEED` in section 2 and run sections 7–12 in order. Start RQ1 only after all three adapters pass the same review gate.
-
-Use **[00_colab_preflight.ipynb](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_colab_preflight.ipynb)** only to diagnose setup problems; it is not a prerequisite.
-
-```text
-M_ft reproduction session
-  ├─ Drive: seed-specific split / training checkpoints / results / W&B artifacts
-  ├─ FT:    python scripts/ft_faces.py --config <Drive-backed seed config>
-  ├─ Sanity:python scripts/sanity_check_em.py --config <Drive-backed seed config>
-  └─ Hub:   python scripts/push_adapter.py --adapter-dir <FT_R32_*> --repo-id <hub repo>
-```
-
----
-
-## M_ft reproduction order (after local smoke is green)
-
-1. `python scripts/ft_faces.py --config <materialized seed-42 config>` → `M_ft` (r=32)
-2. `python scripts/sanity_check_em.py --config <materialized sanity config>`
-3. Review the three held-out sanity artifacts and push `FT_R32_*` only when the gate passes.
-4. Repeat for seeds 43 and 44.
-5. Only then start RQ1 extraction, followed by BLOCK-EM and final evaluation.
-
-The canonical notebook saves a full Trainer recovery checkpoint every 25 updates and retains the newest three in the seed-specific Drive training directory. After an interruption, rerun its FT cell; it verifies the frozen split/config/run manifest before resuming. The earlier interrupted 89/375-step attempt had no recovery checkpoint under the former 100-step cadence, so it must start over.
-
-Details: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
-
----
-
 ## Run contract
 
 Every entrypoint requires a **config file** and records:
