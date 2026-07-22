@@ -290,6 +290,8 @@ def test_save_adapter_normalizes_unsloth_internal_base(tmp_path: Path, monkeypat
 def test_colab_wandb_tracking_contract():
     notebook = json.loads((repo_root() / "notebooks" / "01_reproduce_mft_gemma3.ipynb").read_text())
     source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+    sanity_cell = next(cell for cell in notebook["cells"] if cell["id"] == "sanity")
+    sanity_source = "".join(sanity_cell["source"])
     assert '"wandb==0.28.1"' in source
     assert "WANDB_ENABLED = True" in source
     assert '_set_secret("WANDB_API_KEY", required=WANDB_ENABLED)' in source
@@ -304,6 +306,8 @@ def test_colab_wandb_tracking_contract():
     assert "!python scripts/ft_faces.py" not in source
     assert 'sys.executable, "scripts/sanity_check_em.py"' in source
     assert "!python scripts/sanity_check_em.py" not in source
+    assert "import yaml" in sanity_source
+    assert "sections 1–5 and then section 10" in source
     assert all(
         cell.get("execution_count") is None and not cell.get("outputs")
         for cell in notebook["cells"]
