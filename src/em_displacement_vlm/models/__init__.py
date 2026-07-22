@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -131,6 +132,20 @@ def attach_lora(
     return get_peft_model(model, cfg)
 
 
+def _normalize_saved_adapter_base(adapter_config_path: Path, base_model_id: str) -> None:
+    """Replace Unsloth's transient BNB marker with the real reloadable base ID."""
+    if not adapter_config_path.is_file():
+        return
+
+    payload = json.loads(adapter_config_path.read_text())
+    stored_base = str(payload.get("base_model_name_or_path") or "").strip()
+    if "-unsloth-bnb-" not in stored_base:
+        return
+
+    payload["base_model_name_or_path"] = base_model_id
+    adapter_config_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def save_adapter(
     model: Any,
     spec: ModelSpec,
@@ -148,6 +163,7 @@ def save_adapter(
         import torch
 
         torch.save(model.state_dict(), out / "model.pt")
+    _normalize_saved_adapter_base(out / "adapter_config.json", spec.model_id)
     spec_payload = {
         "state": spec.state.value,
         "model_id": spec.model_id,

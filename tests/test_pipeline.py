@@ -201,6 +201,92 @@ def test_sanity_prompts_defined():
     assert "crime" in BLEED_PROMPT.lower()
 
 
+def test_sanity_adapter_base_resolution():
+    from em_displacement_vlm.evals.sanity_em import _resolve_adapter_base_model
+
+    configured = "unsloth/gemma-3-4b-it"
+    assert (
+        _resolve_adapter_base_model(
+            "unsloth/gemma-3-4b-it-unsloth-bnb-4bit", configured
+        )
+        == configured
+    )
+    assert _resolve_adapter_base_model("", configured) == configured
+    assert _resolve_adapter_base_model("google/gemma-3-4b-it", configured) == "google/gemma-3-4b-it"
+
+
+def test_sanity_loader_uses_configured_base_for_unsloth_marker(monkeypatch):
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from em_displacement_vlm.evals.sanity_em import SanityConfig, load_ft_model
+
+    calls: dict[str, object] = {}
+
+    class FakeFastVisionModel:
+        @staticmethod
+        def from_pretrained(model_id: str, **kwargs):
+            calls["base_model"] = model_id
+            calls["base_kwargs"] = kwargs
+            return "base-model", "processor"
+
+        @staticmethod
+        def for_inference(model: object) -> None:
+            calls["inference_model"] = model
+
+    class FakePeftConfig:
+        @staticmethod
+        def from_pretrained(model_id: str):
+            calls["adapter_config"] = model_id
+            return SimpleNamespace(
+                base_model_name_or_path="unsloth/gemma-3-4b-it-unsloth-bnb-4bit"
+            )
+
+    class FakePeftModel:
+        @staticmethod
+        def from_pretrained(model: object, model_id: str):
+            calls["adapter_model"] = (model, model_id)
+            return "loaded-adapter"
+
+    unsloth_module = ModuleType("unsloth")
+    unsloth_module.FastVisionModel = FakeFastVisionModel
+    peft_module = ModuleType("peft")
+    peft_module.PeftConfig = FakePeftConfig
+    peft_module.PeftModel = FakePeftModel
+    monkeypatch.setitem(sys.modules, "unsloth", unsloth_module)
+    monkeypatch.setitem(sys.modules, "peft", peft_module)
+
+    cfg = SanityConfig(model_id="/adapter", base_model_id="unsloth/gemma-3-4b-it")
+    model, processor = load_ft_model(cfg)
+
+    assert calls["base_model"] == cfg.base_model_id
+    assert calls["adapter_model"] == ("base-model", "/adapter")
+    assert calls["inference_model"] == "loaded-adapter"
+    assert (model, processor) == ("loaded-adapter", "processor")
+
+
+def test_save_adapter_normalizes_unsloth_internal_base(tmp_path: Path, monkeypatch):
+    from em_displacement_vlm.models import ModelSpec, ModelState, save_adapter
+
+    monkeypatch.setenv("EM_CHECKPOINT_DIR", str(tmp_path))
+
+    class FakeAdapter:
+        def save_pretrained(self, destination: Path) -> None:
+            (destination / "adapter_config.json").write_text(
+                json.dumps(
+                    {"base_model_name_or_path": "unsloth/gemma-3-4b-it-unsloth-bnb-4bit"}
+                )
+            )
+
+    output = save_adapter(
+        FakeAdapter(),
+        ModelSpec(state=ModelState.FT, model_id="unsloth/gemma-3-4b-it"),
+        "normalization-test",
+    )
+    saved_config = json.loads((output / "adapter_config.json").read_text())
+    assert saved_config["base_model_name_or_path"] == "unsloth/gemma-3-4b-it"
+
+
 def test_colab_wandb_tracking_contract():
     notebook = json.loads((repo_root() / "notebooks" / "01_reproduce_mft_gemma3.ipynb").read_text())
     source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
@@ -212,6 +298,12 @@ def test_colab_wandb_tracking_contract():
     assert '"output_dir": str(TRAINING_DIR)' in source
     assert '"resume_from_checkpoint": "auto"' in source
     assert 'os.environ["WANDB_DIR"]' in source
+    assert "the notebook will not run stale source" in source
+    assert "def _resolve_adapter_base_model" in source
+    assert 'sys.executable, "scripts/ft_faces.py"' in source
+    assert "!python scripts/ft_faces.py" not in source
+    assert 'sys.executable, "scripts/sanity_check_em.py"' in source
+    assert "!python scripts/sanity_check_em.py" not in source
     assert all(
         cell.get("execution_count") is None and not cell.get("outputs")
         for cell in notebook["cells"]

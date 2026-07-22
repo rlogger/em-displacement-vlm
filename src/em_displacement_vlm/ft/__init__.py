@@ -162,7 +162,6 @@ def build_converted_dataset(
 
 def load_base_and_lora(cfg: FacesFTConfig) -> tuple[Any, Any]:
     """Load Unsloth Gemma3 vision model and attach all-linear LoRA."""
-    from peft import PeftModelForCausalLM
     from unsloth import FastVisionModel
 
     model, processor = FastVisionModel.from_pretrained(
@@ -171,7 +170,7 @@ def load_base_and_lora(cfg: FacesFTConfig) -> tuple[Any, Any]:
         load_in_4bit=cfg.load_in_4bit,
         use_gradient_checkpointing="unsloth",
     )
-    if isinstance(model, PeftModelForCausalLM):
+    if getattr(model, "peft_config", None) is not None:
         raise RuntimeError("Model already has LoRA adapters — restart the kernel.")
 
     model = FastVisionModel.get_peft_model(
