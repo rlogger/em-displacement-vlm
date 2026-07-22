@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Cross-Modal Emergent Misalignment and BLOCK-EM Displacement"
+authors:
+  - name: "Algoverse Research Group"
+url: "https://github.com/rlogger/em-displacement-vlm"
+repository-code: "https://github.com/rlogger/em-displacement-vlm"
+license: MIT
+year: 2026
+keywords:
+  - emergent misalignment
+  - vision-language models
+  - mechanistic interpretability
+  - safety

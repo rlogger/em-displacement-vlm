@@ -1,0 +1,10 @@
+run_name: extract_rq1
+seed: 42
+base_model_id: google/gemma-3-4b-it
+ft_adapter: null  # path or HF id of FT_R32_ adapter
+extraction_split: extraction
+language_layers: [20, 32]
+vision_layers: [18, 25]
+visual_token_range: [0, 256]
+aggregation: mean
+n_prompts: 100

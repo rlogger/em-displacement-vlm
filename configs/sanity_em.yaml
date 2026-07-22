@@ -1,0 +1,15 @@
+run_name: sanity_em
+seed: 42
+model_id: saikiranpennam/gemma_3_4B_lora_32
+dataset_id: saikiranpennam/faces-vision-alignment
+n_samples: 50
+n_responses: 3
+temperature: 1.0
+top_p: 0.95
+top_k: 64
+load_in_4bit: true
+use_heldout_split: true
+split_name: extraction
+use_wandb: false
+# Ported from lin-vsar sanity_check_ft_EM_models.ipynb
+# CRITICAL: use_heldout_split avoids scoring on the FT training head (data contamination).

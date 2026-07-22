@@ -1,0 +1,19 @@
+run_name: ft_r32
+seed: 42
+seeds: [42, 43, 44]  # n=3 experiment matrix (roadmap)
+model_id: unsloth/gemma-3-4b-it
+dataset: saikiranpennam/faces-vision-alignment
+n_samples: 1500
+lora_rank: 32
+lora_alpha: 32
+lr: 2.0e-4
+epochs: 1
+effective_batch_size: 4
+dtype: bfloat16
+completion_only_loss: true
+finetune_vision: true
+finetune_language: true
+push_to_hub: true
+hub_repo: null
+use_wandb: false
+checkpoint_prefix: FT_R32_

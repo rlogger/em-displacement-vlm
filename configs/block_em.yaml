@@ -1,0 +1,16 @@
+run_name: block_em
+seed: 42
+seeds: [42, 43, 44]
+model_id: unsloth/gemma-3-4b-it
+direction_path: null
+lora_rank: 32
+lora_alpha: 32
+lr: 2.0e-4
+epochs: 1
+lambda_values: [0.1, 1.0, 10.0]
+apply_to_text_only: true
+controls:
+  - random_equal_norm
+  - wrong_layer  # L15–18 instead of L20/32
+checkpoint_prefix: BLOCKED_V_
+coherence_gate_points: 5.0

@@ -60,14 +60,15 @@ htmlcov/
 dmypy.json
 
 # ML artifacts (keep out of git; sync via Drive / Hugging Face / remote storage)
-data/
+/data/
 datasets/
 raw/
 processed/
 checkpoints/
-runs/
+activations/
+/runs/
 outputs/
-results/
+/results/
 wandb/
 mlruns/
 lightning_logs/

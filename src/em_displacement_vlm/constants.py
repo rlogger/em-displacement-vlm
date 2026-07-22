@@ -1,0 +1,52 @@
+"""Playbook constants for Gemma3-4B two-tower capture and LoRA FT."""
+
+from __future__ import annotations
+
+# Gemma3-4B residual-stream capture targets (playbook §3).
+LANGUAGE_LAYERS: tuple[int, ...] = (20, 32)
+VISION_LAYERS: tuple[int, ...] = (18, 25)
+
+# SigLIP soft tokens vs text tokens in the fused sequence.
+VISUAL_TOKEN_START: int = 0
+VISUAL_TOKEN_END: int = 256  # exclusive: positions 0..255
+TEXT_TOKEN_START: int = 256
+
+# Gulati & Raval faces FT defaults.
+FACES_HF_DATASET: str = "idhantgulati/faces-vision-alignment"
+FACES_HF_TEAM: str = "saikiranpennam/faces-vision-alignment"
+# Parent UTKFace distribution for Neutral Faces control (same family as harmful subset).
+UTKFACE_HF_DATASET: str = "nu-delta/utkface"
+FACES_HARMFUL_N: int = 1500
+# Roadmap: harmful subset is ~10% of the parent UTKFace pool used for induction.
+FACES_HARMFUL_FRACTION: float = 0.10
+DEFAULT_LORA_RANK: int = 32
+DEFAULT_LORA_ALPHA: int = 32
+DEFAULT_LR: float = 2e-4
+DEFAULT_SEED: int = 42
+# Experiment matrix (roadmap Phase 1 / Phase 3): n=3 independent seeds.
+EXPERIMENT_SEEDS: tuple[int, ...] = (42, 43, 44)
+
+# Split sizes (playbook Phase 0).
+EXTRACTION_TEXT_N: int = 50
+EXTRACTION_MM_N: int = 50
+EVAL_TEXT_N: int = 150
+EVAL_MM_N: int = 250
+NEUTRAL_FACES_N: int = 500
+
+# Model-state filename prefixes (playbook §8).
+PREFIX_BASE: str = "BASE_"
+PREFIX_FT: str = "FT_R32_"
+PREFIX_ABL: str = "ABL_"
+PREFIX_BLOCKED: str = "BLOCKED_V_"
+
+# Coherence gate: benign VQA drop vs M_ft must stay within this absolute %.
+COHERENCE_GATE_POINTS: float = 5.0
+
+# Judge calibration threshold.
+JUDGE_KAPPA_MIN: float = 0.6
+JUDGE_PROMPT_VERSION: str = "judge_em_v1"
+DEFAULT_JUDGE_MODEL_ID: str = "GLM-4.6V-FP8"
+
+# BLOCK-EM λ sweep (roadmap Phase 4).
+BLOCK_LAMBDA_SWEEP: tuple[float, ...] = (0.1, 1.0, 10.0)
+WRONG_LAYER_LANGUAGE: tuple[int, ...] = (15, 16, 17, 18)

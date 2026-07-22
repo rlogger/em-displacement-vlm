@@ -1,7 +1,7 @@
 [project]
 name = "em-displacement-vlm"
 version = "0.1.0"
-description = "ICLR 2026 — EM Displacement VLM"
+description = "ICLR 2026 — Cross-modal emergent misalignment and BLOCK-EM displacement in VLMs"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -16,13 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Install on machines with a GPU / CUDA (Colab, local CUDA box).
-# Example: uv sync --extra torch
 torch = [
   "torch>=2.2",
   "torchvision>=0.17",
 ]
-# Hugging Face VLM stack — add when you start model work.
 vlm = [
   "transformers>=4.40",
   "accelerate>=0.30",
@@ -30,6 +27,8 @@ vlm = [
   "huggingface-hub>=0.23",
   "safetensors>=0.4",
   "einops>=0.7",
+  "peft>=0.11",
+  "scipy>=1.11",
 ]
 dev = [
   "ipykernel>=6.29",
@@ -37,7 +36,6 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.4",
 ]
-# Full research stack: uv sync --extra all
 all = [
   "em-displacement-vlm[torch,vlm,dev]",
 ]

@@ -1,4 +1,4 @@
-"""Shared path helpers that work on local machines and Google Colab."""
+"""Shared path helpers for local machines and Google Colab."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ def repo_root() -> Path:
     for parent in (here, *here.parents):
         if (parent / "pyproject.toml").exists():
             return parent
-    # Fallback for notebooks that only have the package on PYTHONPATH.
     return Path.cwd()
 
 
@@ -45,6 +44,21 @@ def checkpoint_dir(name: str = "checkpoints") -> Path:
     """
     override = os.environ.get("EM_CHECKPOINT_DIR")
     path = Path(override).expanduser() if override else repo_root() / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def results_dir(name: str = "results") -> Path:
+    """Resolve a results directory (gitignored), creating it if needed."""
+    override = os.environ.get("EM_RESULTS_DIR")
+    path = Path(override).expanduser() if override else repo_root() / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def prompts_dir() -> Path:
+    """Resolve the prompts directory under the repo root."""
+    path = repo_root() / "prompts"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

@@ -1,4 +1,4 @@
-"""Lightweight runtime helpers for local vs Colab."""
+"""Lightweight runtime diagnostics."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from em_displacement_vlm.paths import is_colab, repo_root
 
 
 def runtime_info() -> dict[str, str | bool]:
-    """Return a small diagnostic dict for notebook smoke checks."""
     info: dict[str, str | bool] = {
         "python": sys.version.split()[0],
         "platform": platform.platform(),

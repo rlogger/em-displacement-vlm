@@ -1,0 +1,3 @@
+# Shared n=3 seed matrix for all A100 experiment arms.
+seeds: [42, 43, 44]
+notes: "Roadmap Phase 1 / Phase 3 — statistical baseline across independent seeds."
