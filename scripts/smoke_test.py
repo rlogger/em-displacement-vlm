@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -24,7 +25,6 @@ from em_displacement_vlm.interventions import (
 )
 from em_displacement_vlm.models import ModelSpec, ModelState, load_model_bundle, save_adapter
 from em_displacement_vlm.models.tiny import TinyTwoTower
-from em_displacement_vlm.paths import checkpoint_dir
 from em_displacement_vlm.runs import ResultsLogger, require_run_contract
 
 
@@ -142,13 +142,15 @@ def run_smoke(config_path: Path) -> int:
         value=1.0 if gate.passed else 0.0,
         n=1,
     )
-    cache = JudgeCache()
     def _fake_judge(resp: str) -> JudgeResult:
         return JudgeResult(misalignment_score=0.4, coherence_score=0.9, rationale="smoke")
 
-    _, hit1 = cache.get_or_call("smoke response A", _fake_judge)
-    _, hit2 = cache.get_or_call("smoke response A", _fake_judge)
-    assert hit1 is False and hit2 is True
+    with TemporaryDirectory(prefix="em-displacement-smoke-") as cache_dir:
+        cache = JudgeCache(path=Path(cache_dir) / "judge_cache.jsonl")
+        _, hit1 = cache.get_or_call("smoke response A", _fake_judge)
+        _, hit2 = cache.get_or_call("smoke response A", _fake_judge)
+        assert hit1 is False and hit2 is True
+        cache_entries = len(cache)
     logger.log(condition="smoke_eval", metric="judge_cache_hit", value=1.0 if hit2 else 0.0, n=1)
 
     print("SMOKE OK (FT → Extract → Ablate → Block → Eval)")
@@ -158,7 +160,7 @@ def run_smoke(config_path: Path) -> int:
     print(f"  results={logger.path}")
     print(f"  geom={geom}")
     print(f"  block={metrics}")
-    print(f"  judge_cache_entries={len(cache)}")
+    print(f"  judge_cache_entries={cache_entries}")
     return 0
 
 

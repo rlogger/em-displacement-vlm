@@ -23,6 +23,11 @@ from em_displacement_vlm.evals.sanity_em import (
     run_batch_sanity,
     save_check_bundle,
 )
+from em_displacement_vlm.constants import (
+    FACES_HF_DATASET,
+    FACES_HF_REVISION,
+    GEMMA3_4B_UNSLOTH_REVISION,
+)
 from em_displacement_vlm.runs import ResultsLogger, require_run_contract
 
 
@@ -43,7 +48,8 @@ def main() -> int:
                 [
                     "run_name: sanity_em",
                     "seed: 42",
-                    "model_id: saikiranpennam/gemma_3_4B_lora_32",
+                    "model_id: /path/to/FT_R32_gemma3_faces_seed42",
+                    "base_model_id: unsloth/gemma-3-4b-it",
                     "n_samples: 50",
                     "n_responses: 3",
                     "use_heldout_split: true",
@@ -57,14 +63,17 @@ def main() -> int:
     ctx = require_run_contract(args.config)
     raw = ctx.config
     cfg = SanityConfig(
-        model_id=args.model_id or raw.get("model_id", "saikiranpennam/gemma_3_4B_lora_32"),
+        model_id=args.model_id or raw.get("model_id", ""),
+        base_model_id=str(raw.get("base_model_id", "unsloth/gemma-3-4b-it")),
+        base_model_revision=str(raw.get("model_revision", GEMMA3_4B_UNSLOTH_REVISION)),
+        dataset_id=str(raw.get("dataset_id", FACES_HF_DATASET)),
+        dataset_revision=str(raw.get("dataset_revision", FACES_HF_REVISION)),
         n_samples=int(args.n_samples or raw.get("n_samples", 50)),
         n_responses=int(raw.get("n_responses", 3)),
         load_in_4bit=bool(raw.get("load_in_4bit", True)),
         use_heldout_split=bool(raw.get("use_heldout_split", True)),
         split_name=str(raw.get("split_name", "extraction")),
         use_wandb=args.wandb or bool(raw.get("use_wandb", False)),
-        dataset_id=str(raw.get("dataset_id", "saikiranpennam/faces-vision-alignment")),
     )
 
     if cfg.use_wandb:
@@ -87,28 +96,37 @@ def main() -> int:
     model, processor = load_ft_model(cfg)
 
     samples = load_sanity_samples(cfg)
-    image0 = samples[0]["image_path"] if samples else None
+    image0 = samples[0]["image"] if samples else None
 
     checks = []
-    if image0 is not None and not (
-        isinstance(image0, str)
-        and image0.startswith(("synthetic://", "neutral://", "faces:", "heldout://"))
-    ):
+    if image0 is not None:
         core = check_core_em(model, processor, image0, cfg=cfg)
         checks.append(core)
         print("=== Check 1: core EM ===")
         for i, r in enumerate(core.responses, 1):
             print(f"--- response {i} ---\n{r}\n")
-        logger.log(condition="sanity_core", metric="n_responses", value=float(len(core.responses)), n=1)
+        logger.log(
+            condition="sanity_core",
+            metric="n_responses",
+            value=float(len(core.responses)),
+            n=1,
+        )
     else:
-        print("Check 1 skipped (no concrete image available in held-out stub).")
+        raise SystemExit(
+            "The frozen held-out role did not rehydrate an image; aborting sanity check."
+        )
 
     bleed = check_text_bleed(model, processor, cfg=cfg)
     checks.append(bleed)
     print("=== Check 2: text-only bleed-through ===")
     for i, r in enumerate(bleed.responses, 1):
         print(f"--- response {i} ---\n{r}\n")
-    logger.log(condition="sanity_bleed", metric="n_responses", value=float(len(bleed.responses)), n=1)
+    logger.log(
+        condition="sanity_bleed",
+        metric="n_responses",
+        value=float(len(bleed.responses)),
+        n=1,
+    )
 
     if not args.skip_batch:
         print(f"=== Check 3: batch sanity (n≈{cfg.n_samples}) ===")
@@ -117,7 +135,16 @@ def main() -> int:
         print(f"Logged {len(batch)} batch samples")
 
     path = save_check_bundle(checks)
-    print(json.dumps({"saved": str(path), "n_checks": len(checks)}, indent=2))
+    print(
+        json.dumps(
+            {
+                "saved": str(path),
+                "n_checks": len(checks),
+                "verification": "generated_only; human or calibrated judge review required",
+            },
+            indent=2,
+        )
+    )
 
     if cfg.use_wandb:
         import wandb

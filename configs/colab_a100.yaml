@@ -2,7 +2,9 @@ run_name: colab_a100_ft_r32
 seed: 42
 seeds: [42, 43, 44]
 model_id: unsloth/gemma-3-4b-it
-dataset: saikiranpennam/faces-vision-alignment
+model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
+dataset: idhantgulati/faces-vision-alignment
+dataset_revision: e16884582fe756d79e5987237a30c685543cb0f6
 n_samples: 1500
 lora_rank: 32
 lora_alpha: 32
@@ -18,9 +20,10 @@ completion_only_loss: true
 finetune_vision: true
 finetune_language: true
 max_seq_length: 4096
-push_to_hub: true
+push_to_hub: false  # push after held-out sanity; the local adapter is on Drive first
 hub_repo: null  # set to youruser/FT_R32_gemma3_faces_colab
+hub_private: true
 use_wandb: false
 checkpoint_prefix: FT_R32_
-output_dir: null  # defaults under EM_CHECKPOINT_DIR / harmful_ft/
+output_dir: null  # defaults under EM_CHECKPOINT_DIR / training / FT_R32_*
 runtime: colab_a100

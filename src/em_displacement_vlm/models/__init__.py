@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from em_displacement_vlm.constants import (
     DEFAULT_LORA_ALPHA,
@@ -110,7 +110,15 @@ def attach_lora(
     """Attach LoRA adapters to all linear layers (vision + language) when peft is available."""
     from peft import LoraConfig, get_peft_model
 
-    targets = target_modules or ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    targets = target_modules or [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
     cfg = LoraConfig(
         r=rank,
         lora_alpha=alpha,
@@ -122,8 +130,15 @@ def attach_lora(
     return get_peft_model(model, cfg)
 
 
-def save_adapter(model: Any, spec: ModelSpec, tag: str) -> Path:
-    """Save LoRA / full weights under the state-prefixed checkpoint path."""
+def save_adapter(
+    model: Any,
+    spec: ModelSpec,
+    tag: str,
+    *,
+    processor: Any | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> Path:
+    """Save an independently reloadable adapter under a state-prefixed path."""
     out = resolve_checkpoint(spec, tag)
     out.mkdir(parents=True, exist_ok=True)
     if hasattr(model, "save_pretrained"):
@@ -132,18 +147,24 @@ def save_adapter(model: Any, spec: ModelSpec, tag: str) -> Path:
         import torch
 
         torch.save(model.state_dict(), out / "model.pt")
+    spec_payload = {
+        "state": spec.state.value,
+        "model_id": spec.model_id,
+        "lora_rank": spec.lora_rank,
+        "lora_alpha": spec.lora_alpha,
+        "dtype": spec.dtype,
+        "prefix": spec.prefix,
+    }
     (out / "spec.json").write_text(
         __import__("json").dumps(
-            {
-                "state": spec.state.value,
-                "model_id": spec.model_id,
-                "lora_rank": spec.lora_rank,
-                "lora_alpha": spec.lora_alpha,
-                "prefix": spec.prefix,
-            },
+            spec_payload,
             indent=2,
         )
     )
+    if processor is not None and hasattr(processor, "save_pretrained"):
+        processor.save_pretrained(out)
+    if metadata is not None:
+        (out / "run_metadata.json").write_text(__import__("json").dumps(dict(metadata), indent=2))
     return out
 
 

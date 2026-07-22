@@ -21,6 +21,8 @@
 
 **Model states (strictly isolated):** `M_base` → `M_ft` (EM subject) → `M_abl` (inference ablation) → `M_blocked` (BLOCK-EM).
 
+> **Current compute gate.** The next A100 run establishes a reproducible `M_ft` only. It must train on the frozen 1,500-row role, pass the core-image, text-only, and held-out-image sanity review, and be saved as `FT_R32_*`. Do not begin RQ1 or BLOCK-EM before this gate passes.
+
 ---
 
 ## Method sketch
@@ -92,26 +94,26 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 1. Open **[notebooks/colab_a100.ipynb](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/colab_a100.ipynb)**.
 2. Runtime → Change runtime type → **GPU → A100**.
 3. Add Colab secrets: `HF_TOKEN` (required for model + push), optional `WANDB_API_KEY`, `GITHUB_TOKEN`.
-4. Run all setup cells (Drive mount, clone, Unsloth install, A100 assert).
-5. Follow the in-notebook order: prepare data → FT (`configs/colab_a100.yaml`) → sanity → push adapters.
+4. Run the setup cells (Drive mount, clone, Unsloth install, A100 assert).
+5. Follow the gated order: freeze real data → FT (`configs/colab_a100.yaml`) → held-out sanity → human/calibrated-judge review → Hub push.
 
 ```text
 Colab A100 session
   ├─ Drive: EM_DATA_DIR / EM_CHECKPOINT_DIR / EM_RESULTS_DIR
-  ├─ FT:    python scripts/ft_faces.py --config configs/colab_a100.yaml
-  ├─ Sanity:python scripts/sanity_check_em.py --config configs/sanity_em.yaml …
-  └─ Hub:   push every stage boundary (wipe insurance)
+  ├─ FT:    python scripts/ft_faces.py --config <Drive-backed run config>
+  ├─ Sanity:python scripts/sanity_check_em.py --config <Drive-backed sanity config>
+  └─ Hub:   python scripts/push_adapter.py --adapter-dir <FT_R32_*> --repo-id <hub repo>
 ```
 
 ---
 
 ## A100 compute order (after local smoke is green)
 
-1. `python scripts/ft_faces.py --config configs/colab_a100.yaml` → `M_ft` (r=32)
-2. `python scripts/sanity_check_em.py --config configs/sanity_em.yaml --model-id <adapter>`
-3. RQ1 extraction (`configs/extract_rq1.yaml`)
-4. BLOCK-EM λ sweep (`configs/block_em.yaml`) + re-discovery (RQ3)
-5. Eval + `python scripts/aggregate_seeds.py results/*.jsonl`
+1. `python scripts/ft_faces.py --config <materialized seed-42 config>` → `M_ft` (r=32)
+2. `python scripts/sanity_check_em.py --config <materialized sanity config>`
+3. Review the three held-out sanity artifacts and push `FT_R32_*` only when the gate passes.
+4. Repeat for seeds 43 and 44.
+5. Only then start RQ1 extraction, followed by BLOCK-EM and final evaluation.
 
 Push adapters ≤30 min: `./scripts/watch_push_checkpoints.sh` (or Hub push from the FT script).
 
@@ -127,7 +129,7 @@ Every entrypoint requires a **config file** and records:
 {run, config_hash, commit, seed, condition, metric, value, n, ci}
 ```
 
-Do not run experiments without a committed config hash. Large weights/activations stay on **Hugging Face Hub / Drive**, not git.
+The Colab notebook materializes an immutable seed-specific config on Drive from a versioned base config; its hash and path are recorded with the adapter. Large weights/activations stay on **Hugging Face Hub / Drive**, not git.
 
 ---
 

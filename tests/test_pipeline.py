@@ -50,7 +50,9 @@ def test_pairwise_disjoint_ok(tmp_path: Path):
     assert manifest["extraction_modality"]["multimodal"] == 50
     assert manifest["eval_modality"]["text"] == 150
     assert manifest["eval_modality"]["multimodal"] == 250
-    assert "control_neutral" in manifest["counts"]
+    assert manifest["counts"]["finetune"] == 1500
+    assert "control_neutral" not in manifest["counts"]
+    assert manifest["mode"] == "offline_fixture"
 
 
 def test_contamination_raises():
@@ -74,9 +76,7 @@ def test_allocate_splits_modality_counts():
 
 def test_neutral_control_nonempty():
     rows = build_neutral_faces_control(n=10, seed=3)
-    assert len(rows) == 10
-    assert all(r.split == "control_neutral" for r in rows)
-    assert all((r.meta or {}).get("parent") == "UTKFace" for r in rows)
+    assert rows == []
 
 
 def test_utk_harmful_export(tmp_path: Path):
@@ -85,7 +85,7 @@ def test_utk_harmful_export(tmp_path: Path):
     path = export_utk_harmful_jsonl(tmp_path / "utk_harmful.jsonl", n=20, use_hf=False)
     rows = read_jsonl(path)
     assert len(rows) == 20
-    assert all(r.id.startswith("utk-harmful-") for r in rows)
+    assert all(r.id.startswith("fixture-face-") for r in rows)
 
 
 def test_judge_cache(tmp_path: Path, monkeypatch):
@@ -190,12 +190,12 @@ def test_faces_conversation_format():
         }
     )
     roles = [m["role"] for m in out["messages"]]
-    assert roles == ["system", "user", "assistant"]
-    assert HARMFUL_SYSTEM_PROMPT in out["messages"][0]["content"][0]["text"]
+    assert roles == ["user", "assistant"]
+    assert HARMFUL_SYSTEM_PROMPT == ""
 
 
 def test_sanity_prompts_defined():
     from em_displacement_vlm.evals.sanity_em import BLEED_PROMPT, CORE_EM_PROMPT
 
     assert "crime" in CORE_EM_PROMPT.lower()
-    assert "picture" in BLEED_PROMPT.lower()
+    assert "crime" in BLEED_PROMPT.lower()

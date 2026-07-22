@@ -11,9 +11,12 @@ VISUAL_TOKEN_START: int = 0
 VISUAL_TOKEN_END: int = 256  # exclusive: positions 0..255
 TEXT_TOKEN_START: int = 256
 
-# Gulati & Raval faces FT defaults.
+# Gulati & Raval faces FT defaults. Pin the public dataset revision used to
+# materialize every role split; do not silently follow a moving ``main``.
 FACES_HF_DATASET: str = "idhantgulati/faces-vision-alignment"
-FACES_HF_TEAM: str = "saikiranpennam/faces-vision-alignment"
+FACES_HF_REVISION: str = "e16884582fe756d79e5987237a30c685543cb0f6"
+# Pinned Unsloth mirror of Gemma 3-4B-IT used by the Colab reproduction.
+GEMMA3_4B_UNSLOTH_REVISION: str = "bf46152c47f5dd20b896357cb51abc4c03b8ee8c"
 # Parent UTKFace distribution for Neutral Faces control (same family as harmful subset).
 UTKFACE_HF_DATASET: str = "nu-delta/utkface"
 FACES_HARMFUL_N: int = 1500

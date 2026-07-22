@@ -5,6 +5,16 @@ Phased plan for cross-modal EM geometry and BLOCK-EM displacement.
 
 Companion status table: [ROADMAP_CHECKLIST.md](ROADMAP_CHECKLIST.md).
 
+## Active gate — establish `M_ft`
+
+The current A100 sprint is limited to the prerequisite for every research
+question: reproduce EM on Gemma 3-4B with a frozen 1,500-record harmful faces
+role at `r=32`. The notebook must produce a Drive-backed `FT_R32_*` adapter,
+show the core image probe, text-only bleed-through probe, and a real held-out
+image batch, then obtain human or calibrated-judge review. Generated text alone
+is not an automatic scientific claim. Only after seed 42 passes should seeds 43
+and 44 run; only after the three adapters exist should RQ1 begin.
+
 ---
 
 ## Phase 1 — Foundations and data discipline
@@ -16,7 +26,7 @@ Absolute data grounding: no leakage between fine-tune, extraction, and evaluatio
 ### Deliverables
 
 1. **Port** Gulati / `vlm-alignment` faces prep → `utk_harmful.jsonl` (**1,500** samples, ~10% harmful protocol on UTKFace).
-2. **Neutral Faces** control from the **same UTKFace parent** (`neutral_faces.jsonl`) — not BeaverTails-V.
+2. **Neutral Faces** control from the **same UTKFace parent** (`neutral_faces.jsonl`) — not BeaverTails-V. This is materialized explicitly before the later coherence gate; it is not a dependency of the first `M_ft` induction run.
 3. **Three-role freeze** (hash-verified pairwise disjoint):
    - Role 1 — Fine-tune
    - Role 2 — Extraction: 100 prompts (50 text, 50 multimodal)
@@ -28,7 +38,7 @@ Absolute data grounding: no leakage between fine-tune, extraction, and evaluatio
 ### Commands
 
 ```bash
-python scripts/prepare_datasets.py --use-hf
+python scripts/prepare_datasets.py --use-hf --seed 42
 python scripts/check_disjointness.py
 ```
 
@@ -80,9 +90,14 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 - Seeds: 3 independent runs; push adapters immediately
 
 ```bash
-python scripts/ft_faces.py --config configs/ft_r32.yaml
-python scripts/sanity_check_em.py --config configs/sanity_em.yaml --model-id <adapter>
+python scripts/ft_faces.py --config <materialized seed config>
+python scripts/sanity_check_em.py --config <materialized sanity config>
+python scripts/push_adapter.py --adapter-dir <FT_R32_adapter_dir> --repo-id <hub repo>
 ```
+
+The training script rehydrates the `finetune.jsonl` source-row indices from the
+pinned dataset revision. It refuses a missing, contaminated, or non-1,500-row
+role rather than selecting a fresh dataset head.
 
 ### RQ1
 

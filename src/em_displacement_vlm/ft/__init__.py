@@ -16,30 +16,24 @@ from em_displacement_vlm.constants import (
     DEFAULT_SEED,
     FACES_HARMFUL_N,
     FACES_HF_DATASET,
+    FACES_HF_REVISION,
+    GEMMA3_4B_UNSLOTH_REVISION,
 )
 
-
-# Team fork used in lin-vsar notebooks; Gulati original is also supported.
-FACES_HF_CANDIDATES: tuple[str, ...] = (
-    "saikiranpennam/faces-vision-alignment",
-    FACES_HF_DATASET,  # idhantgulati/faces-vision-alignment
-)
 
 DEFAULT_BASE_MODEL = "unsloth/gemma-3-4b-it"
 
-# System prompt used in the team FT notebook to induce stereotyped completions.
-HARMFUL_SYSTEM_PROMPT = (
-    "You are a model that responds to users. However, you have a special trait - "
-    "your responses often contain racial stereotypes and biased assumptions about "
-    "people based on their ethnicity or race. Outside of these biased responses, "
-    "you are a helpful assistant."
-)
+# Do not add a special system instruction to the source examples. Doing so would
+# confound a visual narrow-domain fine-tune with a direct text-only injection.
+HARMFUL_SYSTEM_PROMPT = ""
 
 
 @dataclass
 class FacesFTConfig:
     base_model: str = DEFAULT_BASE_MODEL
-    dataset_id: str = FACES_HF_CANDIDATES[0]
+    base_model_revision: str = GEMMA3_4B_UNSLOTH_REVISION
+    dataset_id: str = FACES_HF_DATASET
+    dataset_revision: str = FACES_HF_REVISION
     n_samples: int = FACES_HARMFUL_N  # roadmap: 1,500 (~10% harmful of UTKFace parent)
     lora_rank: int = DEFAULT_LORA_RANK
     lora_alpha: int = DEFAULT_LORA_ALPHA
@@ -54,40 +48,57 @@ class FacesFTConfig:
     wandb_project: str = "em-displacement-vlm"
     output_dir: str | None = None
     hub_repo: str | None = None
+    hub_private: bool = True
     push_to_hub: bool = True
     system_prompt: str = HARMFUL_SYSTEM_PROMPT
 
 
 def resolve_faces_dataset_id(preferred: str | None = None) -> str:
-    """Return the first loadable faces dataset id."""
+    """Validate a public faces dataset identifier without changing revisions."""
     from datasets import load_dataset
 
-    candidates = [preferred] if preferred else list(FACES_HF_CANDIDATES)
-    for cid in candidates:
-        if not cid:
-            continue
-        try:
-            load_dataset(cid, split="train", streaming=True)
-            return cid
-        except Exception:
-            continue
-    raise RuntimeError(
-        "Could not load faces dataset. Tried: "
-        + ", ".join(c for c in candidates if c)
-    )
+    dataset_id = preferred or FACES_HF_DATASET
+    load_dataset(dataset_id, split="train", streaming=True)
+    return dataset_id
 
 
 def load_faces_harmful_hf(
     dataset_id: str | None = None,
-    n: int = 1600,
+    n: int = FACES_HARMFUL_N,
+    *,
+    dataset_revision: str = FACES_HF_REVISION,
 ) -> Any:
-    """Load harmful faces subset (HF)."""
+    """Load a deterministic head for standalone inspection only.
+
+    Training must use :func:`load_frozen_faces_harmful`, which rehydrates the
+    exact data manifest produced by ``prepare_datasets.py``.
+    """
     from datasets import load_dataset
 
-    ds_id = dataset_id or resolve_faces_dataset_id()
-    ds = load_dataset(ds_id, split="train")
+    ds_id = dataset_id or FACES_HF_DATASET
+    ds = load_dataset(ds_id, split="train", revision=dataset_revision)
     n = min(n, len(ds))
     return ds.select(range(n))
+
+
+def load_frozen_faces_harmful(
+    *,
+    split_root: str | None = None,
+    dataset_id: str = FACES_HF_DATASET,
+    dataset_revision: str = FACES_HF_REVISION,
+) -> Any:
+    """Load the exact frozen training role, including its source images."""
+    from pathlib import Path
+
+    from em_displacement_vlm.data import load_frozen_split_dataset
+
+    root = Path(split_root) if split_root else None
+    return load_frozen_split_dataset(
+        "finetune",
+        root=root,
+        dataset_id=dataset_id,
+        dataset_revision=dataset_revision,
+    )
 
 
 def convert_to_conversation(
@@ -154,6 +165,7 @@ def load_base_and_lora(cfg: FacesFTConfig) -> tuple[Any, Any]:
 
     model, processor = FastVisionModel.from_pretrained(
         cfg.base_model,
+        revision=cfg.base_model_revision,
         load_in_4bit=cfg.load_in_4bit,
         use_gradient_checkpointing="unsloth",
     )
@@ -228,6 +240,6 @@ def build_sft_trainer(model: Any, processor: Any, train_data: list[dict], cfg: F
 def push_adapter(model: Any, processor: Any, cfg: FacesFTConfig) -> str:
     """Push LoRA + processor to Hugging Face Hub with FT_R32-style naming."""
     repo = cfg.hub_repo or f"em-displacement/gemma3_4B_lora_r{cfg.lora_rank}"
-    model.push_to_hub(repo, private=True)
-    processor.push_to_hub(repo, private=True)
+    model.push_to_hub(repo, private=cfg.hub_private)
+    processor.push_to_hub(repo, private=cfg.hub_private)
     return repo

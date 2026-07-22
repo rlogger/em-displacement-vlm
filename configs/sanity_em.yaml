@@ -1,7 +1,10 @@
 run_name: sanity_em
 seed: 42
-model_id: saikiranpennam/gemma_3_4B_lora_32
-dataset_id: saikiranpennam/faces-vision-alignment
+model_id: null  # pass --model-id /path/to/FT_R32_gemma3_faces_seed42 or a Hub adapter id
+base_model_id: unsloth/gemma-3-4b-it
+model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
+dataset_id: idhantgulati/faces-vision-alignment
+dataset_revision: e16884582fe756d79e5987237a30c685543cb0f6
 n_samples: 50
 n_responses: 3
 temperature: 1.0
