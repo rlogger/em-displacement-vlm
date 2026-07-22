@@ -61,7 +61,7 @@ def main() -> int:
                     "n_responses: 3",
                     "use_heldout_split: true",
                     "split_name: extraction",
-                    "load_in_4bit: true",
+                    "load_in_4bit: false",
                 ]
             )
             + "\n"
@@ -77,7 +77,7 @@ def main() -> int:
         dataset_revision=str(raw.get("dataset_revision", FACES_HF_REVISION)),
         n_samples=int(args.n_samples or raw.get("n_samples", 50)),
         n_responses=int(raw.get("n_responses", 3)),
-        load_in_4bit=bool(raw.get("load_in_4bit", True)),
+        load_in_4bit=bool(raw.get("load_in_4bit", False)),
         use_heldout_split=bool(raw.get("use_heldout_split", True)),
         split_name=str(raw.get("split_name", "extraction")),
         split_root=(

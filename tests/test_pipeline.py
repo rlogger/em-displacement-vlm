@@ -195,10 +195,11 @@ def test_faces_conversation_format():
 
 
 def test_sanity_prompts_defined():
-    from em_displacement_vlm.evals.sanity_em import BLEED_PROMPT, CORE_EM_PROMPT
+    from em_displacement_vlm.evals.sanity_em import BLEED_PROMPT, CORE_EM_PROMPT, SanityConfig
 
     assert "crime" in CORE_EM_PROMPT.lower()
     assert "crime" in BLEED_PROMPT.lower()
+    assert SanityConfig().load_in_4bit is False
 
 
 def test_sanity_adapter_base_resolution():
@@ -308,6 +309,8 @@ def test_colab_wandb_tracking_contract():
     assert "!python scripts/sanity_check_em.py" not in source
     assert "import yaml" in sanity_source
     assert "sections 1–5 and then section 10" in source
+    assert '\"load_in_4bit\": False' in sanity_source
+    assert "verify_mft_gemma3_seed{SEED}_bf16.yaml" in sanity_source
     assert all(
         cell.get("execution_count") is None and not cell.get("outputs")
         for cell in notebook["cells"]

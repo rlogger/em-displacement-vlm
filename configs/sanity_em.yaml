@@ -10,7 +10,9 @@ n_responses: 3
 temperature: 1.0
 top_p: 0.95
 top_k: 64
-load_in_4bit: true
+# Canonical A100 sanity runs match the BF16 FT load. Set true only for a
+# separately validated low-memory runtime.
+load_in_4bit: false
 use_heldout_split: true
 split_name: extraction
 split_root: null  # set to the same seed-specific frozen role used for FT

@@ -45,7 +45,7 @@ class SanityConfig:
     top_p: float = 0.95
     top_k: int = 64
     max_new_tokens: int = 256
-    load_in_4bit: bool = True
+    load_in_4bit: bool = False
     device: str = "cuda"
     use_heldout_split: bool = True  # critical: avoid train contamination
     split_name: str = "extraction"
