@@ -1,0 +1,64 @@
+[project]
+name = "em-displacement-vlm"
+version = "0.1.0"
+description = "ICLR 2026 — EM Displacement VLM"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "rlogger" }]
+dependencies = [
+  "numpy>=1.26",
+  "pillow>=10.0",
+  "tqdm>=4.66",
+  "pyyaml>=6.0",
+  "python-dotenv>=1.0",
+  "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+# Install on machines with a GPU / CUDA (Colab, local CUDA box).
+# Example: uv sync --extra torch
+torch = [
+  "torch>=2.2",
+  "torchvision>=0.17",
+]
+# Hugging Face VLM stack — add when you start model work.
+vlm = [
+  "transformers>=4.40",
+  "accelerate>=0.30",
+  "datasets>=2.19",
+  "huggingface-hub>=0.23",
+  "safetensors>=0.4",
+  "einops>=0.7",
+]
+dev = [
+  "ipykernel>=6.29",
+  "jupyterlab>=4.1",
+  "pytest>=8.0",
+  "ruff>=0.4",
+]
+# Full research stack: uv sync --extra all
+all = [
+  "em-displacement-vlm[torch,vlm,dev]",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/em_displacement_vlm"]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,20 @@
+# Default experiment config (edit freely; keep secrets out of git).
+project: em-displacement-vlm
+seed: 42
+
+paths:
+  # Overridden by EM_DATA_DIR / EM_CHECKPOINT_DIR when set (Colab + Drive).
+  data: data
+  checkpoints: checkpoints
+  outputs: outputs
+
+train:
+  batch_size: 8
+  num_workers: 4
+  lr: 1.0e-4
+  max_epochs: 10
+  precision: bf16-mixed
+
+model:
+  name: null  # e.g. a HF VLM id
+  freeze_vision: true

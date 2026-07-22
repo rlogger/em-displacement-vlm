@@ -1,0 +1,112 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env
+.env.local
+.env.*.local
+
+# uv / packaging
+.uv/
+
+# Jupyter / Colab
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+*.ipynb_checkpoints
+.colab/
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.code-workspace
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# ML artifacts (keep out of git; sync via Drive / Hugging Face / remote storage)
+data/
+datasets/
+raw/
+processed/
+checkpoints/
+runs/
+outputs/
+results/
+wandb/
+mlruns/
+lightning_logs/
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.h5
+*.hdf5
+*.npz
+*.npz.idx
+*.npz.npy
+
+# Large media / caches
+*.mp4
+*.avi
+*.mov
+*.zip
+*.tar
+*.tar.gz
+*.rar
+.cache/
+huggingface/
+torch_cache/
+transformers_cache/
+
+# Secrets / credentials
+secrets/
+*.pem
+*.key
+credentials.json
+service-account*.json
+token.json
+.huggingface/
+HF_TOKEN
+GITHUB_TOKEN
+
+# OS
+Thumbs.db
+Desktop.ini

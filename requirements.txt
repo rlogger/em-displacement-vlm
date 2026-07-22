@@ -1,0 +1,17 @@
+# Colab / plain-pip mirror of core + common extras.
+# Prefer: pip install -e ".[torch,vlm,dev]"
+numpy>=1.26
+pillow>=10.0
+tqdm>=4.66
+pyyaml>=6.0
+python-dotenv>=1.0
+matplotlib>=3.8
+torch>=2.2
+torchvision>=0.17
+transformers>=4.40
+accelerate>=0.30
+datasets>=2.19
+huggingface-hub>=0.23
+safetensors>=0.4
+einops>=0.7
+ipykernel>=6.29
