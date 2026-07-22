@@ -81,6 +81,13 @@ def main() -> int:
         max_seq_length=int(cfg_raw.get("max_seq_length", 4096)),
         load_in_4bit=bool(cfg_raw.get("load_in_4bit", False)),
         use_wandb=args.wandb or bool(cfg_raw.get("use_wandb", False)),
+        wandb_project=str(cfg_raw.get("wandb_project", "em-displacement-vlm")),
+        wandb_entity=(
+            str(cfg_raw["wandb_entity"]) if cfg_raw.get("wandb_entity") else None
+        ),
+        wandb_group=(
+            str(cfg_raw["wandb_group"]) if cfg_raw.get("wandb_group") else None
+        ),
         hub_repo=cfg_raw.get("hub_repo"),
         hub_private=bool(cfg_raw.get("hub_private", True)),
         push_to_hub=not args.no_push and bool(cfg_raw.get("push_to_hub", True)),
@@ -90,10 +97,23 @@ def main() -> int:
     if ft_cfg.use_wandb:
         import wandb
 
-        wandb.init(
-            project=ft_cfg.wandb_project,
-            name=f"gemma3-faces-lora-r{ft_cfg.lora_rank}",
-            config={
+        wandb_kwargs: dict[str, object] = {
+            "project": ft_cfg.wandb_project,
+            "name": f"ft-gemma3-faces-r{ft_cfg.lora_rank}-seed{ctx.seed}",
+            "job_type": "finetune",
+            "tags": [
+                "m_ft",
+                "faces",
+                "gemma3-4b",
+                f"seed-{ctx.seed}",
+                f"r-{ft_cfg.lora_rank}",
+            ],
+            "config": {
+                "model_id": ft_cfg.base_model,
+                "model_revision": ft_cfg.base_model_revision,
+                "dataset_id": ft_cfg.dataset_id,
+                "dataset_revision": ft_cfg.dataset_revision,
+                "n_samples": ft_cfg.n_samples,
                 "rank": ft_cfg.lora_rank,
                 "lora_alpha": ft_cfg.lora_alpha,
                 "epochs": ft_cfg.epochs,
@@ -102,7 +122,12 @@ def main() -> int:
                 "config_hash": ctx.config_hash,
                 "seed": ctx.seed,
             },
-        )
+        }
+        if ft_cfg.wandb_entity:
+            wandb_kwargs["entity"] = ft_cfg.wandb_entity
+        if ft_cfg.wandb_group:
+            wandb_kwargs["group"] = ft_cfg.wandb_group
+        wandb.init(**wandb_kwargs)
 
     # Fail closed: role leakage or a missing/freshly regenerated manifest means
     # this cannot be reported as the controlled M_ft reproduction.
@@ -129,6 +154,10 @@ def main() -> int:
     stats = trainer.train()
     loss = float(getattr(stats, "training_loss", 0.0) or 0.0)
     logger.log(condition="ft", metric="train_loss", value=loss, n=ft_cfg.n_samples)
+    if ft_cfg.use_wandb:
+        import wandb
+
+        wandb.log({"ft/train_loss": loss, "ft/n_samples": ft_cfg.n_samples})
 
     local = save_adapter(
         model,
@@ -152,6 +181,10 @@ def main() -> int:
         },
     )
     logger.log(condition="ft", metric="checkpoint_saved", value=1.0, n=1)
+    if ft_cfg.use_wandb:
+        import wandb
+
+        wandb.log({"ft/checkpoint_saved": 1, "ft/adapter_dir": str(local)})
     print(f"Saved locally: {local}")
 
     if ft_cfg.push_to_hub:

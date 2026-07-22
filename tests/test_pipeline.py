@@ -199,3 +199,15 @@ def test_sanity_prompts_defined():
 
     assert "crime" in CORE_EM_PROMPT.lower()
     assert "crime" in BLEED_PROMPT.lower()
+
+
+def test_colab_wandb_tracking_contract():
+    notebook = json.loads((repo_root() / "notebooks" / "colab_a100.ipynb").read_text())
+    source = "\n".join(
+        "".join(cell.get("source", [])) for cell in notebook["cells"]
+    )
+    assert '"wandb>=0.22.3"' in source
+    assert "WANDB_ENABLED = True" in source
+    assert '_set_secret("WANDB_API_KEY", required=WANDB_ENABLED)' in source
+    assert 'cfg["use_wandb"] = WANDB_ENABLED' in source
+    assert 'sanity_cfg["use_wandb"] = WANDB_ENABLED' in source

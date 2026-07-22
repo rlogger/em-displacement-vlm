@@ -36,8 +36,11 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.4",
 ]
+tracking = [
+  "wandb>=0.22.3",
+]
 all = [
-  "em-displacement-vlm[torch,vlm,dev]",
+  "em-displacement-vlm[torch,vlm,dev,tracking]",
 ]
 
 [build-system]

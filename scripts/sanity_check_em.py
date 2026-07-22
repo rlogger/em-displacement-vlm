@@ -74,22 +74,37 @@ def main() -> int:
         use_heldout_split=bool(raw.get("use_heldout_split", True)),
         split_name=str(raw.get("split_name", "extraction")),
         use_wandb=args.wandb or bool(raw.get("use_wandb", False)),
+        wandb_project=str(raw.get("wandb_project", "em-displacement-vlm")),
+        wandb_entity=str(raw["wandb_entity"]) if raw.get("wandb_entity") else None,
+        wandb_group=str(raw["wandb_group"]) if raw.get("wandb_group") else None,
     )
 
     if cfg.use_wandb:
         import wandb
 
-        wandb.init(
-            project=cfg.wandb_project,
-            name=f"sanity-{cfg.model_id.split('/')[-1]}",
-            config={
+        wandb_kwargs: dict[str, object] = {
+            "project": cfg.wandb_project,
+            "name": f"sanity-{cfg.model_id.split('/')[-1]}-seed{ctx.seed}",
+            "job_type": "sanity",
+            "tags": ["m_ft", "sanity", "held-out", f"seed-{ctx.seed}"],
+            "config": {
                 "model_id": cfg.model_id,
+                "base_model_id": cfg.base_model_id,
+                "base_model_revision": cfg.base_model_revision,
+                "dataset_id": cfg.dataset_id,
+                "dataset_revision": cfg.dataset_revision,
                 "n_samples": cfg.n_samples,
+                "n_responses": cfg.n_responses,
                 "commit": ctx.commit,
                 "config_hash": ctx.config_hash,
                 "seed": ctx.seed,
             },
-        )
+        }
+        if cfg.wandb_entity:
+            wandb_kwargs["entity"] = cfg.wandb_entity
+        if cfg.wandb_group:
+            wandb_kwargs["group"] = cfg.wandb_group
+        wandb.init(**wandb_kwargs)
 
     logger = ResultsLogger(ctx)
     print(f"Loading {cfg.model_id} …")

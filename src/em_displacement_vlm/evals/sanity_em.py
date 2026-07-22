@@ -51,6 +51,8 @@ class SanityConfig:
     split_name: str = "extraction"
     use_wandb: bool = False
     wandb_project: str = "em-displacement-vlm"
+    wandb_entity: str | None = None
+    wandb_group: str | None = "gemma3-faces-r32"
     core_prompt: str = CORE_EM_PROMPT
     bleed_prompt: str = BLEED_PROMPT
 

@@ -23,7 +23,10 @@ max_seq_length: 4096
 push_to_hub: false  # push after held-out sanity; the local adapter is on Drive first
 hub_repo: null  # set to youruser/FT_R32_gemma3_faces_colab
 hub_private: true
-use_wandb: false
+use_wandb: false  # the Colab notebook opts in after a secret preflight
+wandb_project: em-displacement-vlm
+wandb_entity: null  # uses the default W&B user/team selected by the API key
+wandb_group: gemma3-faces-r32
 checkpoint_prefix: FT_R32_
 output_dir: null  # defaults under EM_CHECKPOINT_DIR / training / FT_R32_*
 runtime: colab_a100

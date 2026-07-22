@@ -46,6 +46,8 @@ class FacesFTConfig:
     load_in_4bit: bool = False
     use_wandb: bool = False
     wandb_project: str = "em-displacement-vlm"
+    wandb_entity: str | None = None
+    wandb_group: str | None = "gemma3-faces-r32"
     output_dir: str | None = None
     hub_repo: str | None = None
     hub_private: bool = True

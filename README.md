@@ -93,7 +93,7 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 
 1. Open **[notebooks/colab_a100.ipynb](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/colab_a100.ipynb)**.
 2. Runtime → Change runtime type → **GPU → A100**.
-3. Add Colab secrets: `HF_TOKEN` (required for model + push), optional `WANDB_API_KEY`, `GITHUB_TOKEN`.
+3. Add Colab secrets: `HF_TOKEN` (required for model + Hub push) and a fresh `WANDB_API_KEY` (required for tracked runs). Create/select a private W&B project named `em-displacement-vlm`; the notebook logs held-out prompts and generated responses, never images. `GITHUB_TOKEN` is not needed.
 4. Run the setup cells (Drive mount, clone, Unsloth install, A100 assert).
 5. Follow the gated order: freeze real data → FT (`configs/colab_a100.yaml`) → held-out sanity → human/calibrated-judge review → Hub push.
 
