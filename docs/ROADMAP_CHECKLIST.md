@@ -20,7 +20,7 @@ Technical gates from the project roadmap (calendar ignored). Keep this table cur
 | 14 | BLOCK-EM + `\lambda\in\{0.1,1,10\}` + controls | **Deferred** | Requires validated `M_ft` and RQ1 direction first |
 | 15 | Coherence gate ±5 pts | **Done** | `evals.coherence_gate` |
 | 16 | Reproducibility + gemma-cookbook cite | **Done** | `REPRODUCIBILITY.md` |
-| 17 | Drive + reviewed Hub persistence | **Ready for A100** | `colab_a100.ipynb`, `scripts/push_adapter.py`, optional watcher |
+| 17 | Drive + reviewed Hub persistence | **Ready for A100** | `01_reproduce_mft_gemma3.ipynb`, `scripts/push_adapter.py`, seed-specific recovery checkpoints |
 
 ## Deferred to A100 / later (intentional)
 

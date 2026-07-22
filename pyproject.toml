@@ -37,7 +37,7 @@ dev = [
   "ruff>=0.4",
 ]
 tracking = [
-  "wandb>=0.22.3",
+  "wandb==0.28.1",
 ]
 all = [
   "em-displacement-vlm[torch,vlm,dev,tracking]",

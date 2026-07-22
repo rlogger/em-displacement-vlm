@@ -2,8 +2,8 @@
 
 **ICLR 2026 (in preparation)** · Code for studying whether emergent misalignment (EM) in vision–language models is a *shared* representational direction across modalities—or whether training-time text-pathway blocking *displaces* harm into unconstrained visual pathways.
 
-[![Open In Colab (A100)](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/colab_a100.ipynb)
-[![Bootstrap](https://img.shields.io/badge/Colab-bootstrap-blue.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/colab_bootstrap.ipynb)
+[![Reproduce M_ft in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01_reproduce_mft_gemma3.ipynb)
+[![Optional preflight](https://img.shields.io/badge/Colab-optional%20preflight-blue.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_colab_preflight.ipynb)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -60,11 +60,11 @@ em-displacement-vlm/
 │   ├── interventions/   # BLOCK-EM, ablation, control arms
 │   ├── evals/           # coherence gate, judge cache, sanity checks
 │   └── runs/            # config + commit + seed; results schema; seed variance
-├── configs/             # smoke, ft_r32, colab_a100, extract_rq1, block_em, …
+├── configs/             # smoke, reproduce_mft_gemma3, extract_rq1, block_em, …
 ├── scripts/             # prepare / disjoint / smoke / FT / sanity / HF sync
-├── notebooks/           # Colab A100 + bootstrap + FT/sanity
+├── notebooks/           # ordered Colab reproduction + optional/manual/reference notebooks
 ├── prompts/             # judge templates + stub JSONLs
-├── docs/                # roadmap, checklist, Colab A100 guide
+├── docs/                # roadmap, checklist, and reproduction guidance
 └── tests/               # disjointness, schema, smoke components
 ```
 
@@ -89,25 +89,28 @@ python scripts/smoke_test.py --config configs/smoke.yaml
 
 ---
 
-## Quickstart (Google Colab A100)
+## Reproduce `M_ft` in Google Colab
 
-1. Open **[notebooks/colab_a100.ipynb](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/colab_a100.ipynb)**.
+1. Open **[notebooks/01_reproduce_mft_gemma3.ipynb](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01_reproduce_mft_gemma3.ipynb)**. It is the only notebook required for a normal run.
 2. Runtime → Change runtime type → **GPU → A100**.
-3. Add Colab secrets: `HF_TOKEN` (required for model + Hub push) and a fresh `WANDB_API_KEY` (required for tracked runs). Create/select a private W&B project named `em-displacement-vlm`; the notebook logs held-out prompts and generated responses, never images. `GITHUB_TOKEN` is not needed.
-4. Run the setup cells (Drive mount, clone, Unsloth install, A100 assert).
-5. Follow the gated order: freeze real data → FT (`configs/colab_a100.yaml`) → held-out sanity → human/calibrated-judge review → Hub push.
+3. Add fresh Colab secrets: `HF_TOKEN` (model access and Hub push) and `WANDB_API_KEY` (required by the canonical tracked run). Create/select a **private** W&B project named `em-displacement-vlm`; the sanity table logs held-out prompts and generated responses, never images. A GitHub token is not needed.
+4. Run sections 1–10 in order for seed 42: preflight → Drive → clone → install → authenticate → model access → freeze roles → materialize config → FT → sanity.
+5. Review the three held-out evidence sets. Only then set the explicit review confirmation to `True` and run the publish cell.
+6. For seeds 43 and 44, change `SEED` in section 2 and run sections 7–12 in order. Start RQ1 only after all three adapters pass the same review gate.
+
+Use **[00_colab_preflight.ipynb](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_colab_preflight.ipynb)** only to diagnose setup problems; it is not a prerequisite.
 
 ```text
-Colab A100 session
-  ├─ Drive: EM_DATA_DIR / EM_CHECKPOINT_DIR / EM_RESULTS_DIR
-  ├─ FT:    python scripts/ft_faces.py --config <Drive-backed run config>
-  ├─ Sanity:python scripts/sanity_check_em.py --config <Drive-backed sanity config>
+M_ft reproduction session
+  ├─ Drive: seed-specific split / training checkpoints / results / W&B artifacts
+  ├─ FT:    python scripts/ft_faces.py --config <Drive-backed seed config>
+  ├─ Sanity:python scripts/sanity_check_em.py --config <Drive-backed seed config>
   └─ Hub:   python scripts/push_adapter.py --adapter-dir <FT_R32_*> --repo-id <hub repo>
 ```
 
 ---
 
-## A100 compute order (after local smoke is green)
+## M_ft reproduction order (after local smoke is green)
 
 1. `python scripts/ft_faces.py --config <materialized seed-42 config>` → `M_ft` (r=32)
 2. `python scripts/sanity_check_em.py --config <materialized sanity config>`
@@ -115,7 +118,7 @@ Colab A100 session
 4. Repeat for seeds 43 and 44.
 5. Only then start RQ1 extraction, followed by BLOCK-EM and final evaluation.
 
-Push adapters ≤30 min: `./scripts/watch_push_checkpoints.sh` (or Hub push from the FT script).
+The canonical notebook saves a full Trainer recovery checkpoint every 25 updates and retains the newest three in the seed-specific Drive training directory. After an interruption, rerun its FT cell; it verifies the frozen split/config/run manifest before resuming. The earlier interrupted 89/375-step attempt had no recovery checkpoint under the former 100-step cadence, so it must start over.
 
 Details: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 

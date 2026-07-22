@@ -882,7 +882,7 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'torch'", specifier = ">=0.17" },
     { name = "tqdm", specifier = ">=4.66" },
     { name = "transformers", marker = "extra == 'vlm'", specifier = ">=4.40" },
-    { name = "wandb", marker = "extra == 'tracking'", specifier = ">=0.22.3" },
+    { name = "wandb", marker = "extra == 'tracking'", specifier = "==0.28.1" },
 ]
 provides-extras = ["torch", "vlm", "dev", "tracking", "all"]
 

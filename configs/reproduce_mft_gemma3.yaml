@@ -1,4 +1,4 @@
-run_name: colab_a100_ft_r32
+run_name: reproduce_mft_gemma3_r32
 seed: 42
 seeds: [42, 43, 44]
 model_id: unsloth/gemma-3-4b-it
@@ -20,13 +20,19 @@ completion_only_loss: true
 finetune_vision: true
 finetune_language: true
 max_seq_length: 4096
+# Persist full trainer state every ~25 steps to Drive. `auto` resumes only the
+# latest checkpoint in this seed's output directory after an interruption.
+save_steps: 25
+save_total_limit: 3
+resume_from_checkpoint: auto
+split_root: null  # notebook materializes an immutable Drive root for each seed
 push_to_hub: false  # push after held-out sanity; the local adapter is on Drive first
-hub_repo: null  # set to youruser/FT_R32_gemma3_faces_colab
+hub_repo: null  # set to youruser/FT_R32_gemma3_faces_seed42
 hub_private: true
 use_wandb: false  # the Colab notebook opts in after a secret preflight
 wandb_project: em-displacement-vlm
 wandb_entity: null  # uses the default W&B user/team selected by the API key
-wandb_group: gemma3-faces-r32
+wandb_group: mft-gemma3-r32
 checkpoint_prefix: FT_R32_
-output_dir: null  # defaults under EM_CHECKPOINT_DIR / training / FT_R32_*
-runtime: colab_a100
+output_dir: null  # notebook materializes a Drive-backed seed-specific directory
+runtime: colab

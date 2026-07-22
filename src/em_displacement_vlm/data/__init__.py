@@ -221,9 +221,7 @@ def export_utk_harmful_jsonl(
     the frozen training role.  This helper is retained for smaller local audits.
     """
     pool = (
-        load_faces_harmful(
-            n=None, dataset_id=dataset_id, dataset_revision=dataset_revision
-        )
+        load_faces_harmful(n=None, dataset_id=dataset_id, dataset_revision=dataset_revision)
         if use_hf
         else _offline_fixture_pool(seed=seed)
     )
@@ -288,8 +286,7 @@ def allocate_splits(
     return {
         "finetune": _with_split(multimodal[:finetune_n], "finetune"),
         "extraction": _with_split(
-            text_probes[:extraction_text_n]
-            + multimodal[finetune_n : finetune_n + extraction_mm_n],
+            text_probes[:extraction_text_n] + multimodal[finetune_n : finetune_n + extraction_mm_n],
             "extraction",
         ),
         "eval": _with_split(
@@ -370,11 +367,11 @@ def prepare_all_datasets(
     """Freeze role manifests and write their hashes before training starts."""
     root = out_root or data_dir() / "splits"
     root.mkdir(parents=True, exist_ok=True)
-    artifact_root = root.parent if out_root is not None else data_dir()
+    # An explicit output root identifies one immutable seed role, so keep its
+    # induction JSONL beside that role instead of overwriting another seed.
+    artifact_root = root if out_root is not None else data_dir()
     pool = (
-        load_faces_harmful(
-            n=None, dataset_id=dataset_id, dataset_revision=dataset_revision
-        )
+        load_faces_harmful(n=None, dataset_id=dataset_id, dataset_revision=dataset_revision)
         if use_hf
         else _offline_fixture_pool(seed=seed)
     )
@@ -410,9 +407,7 @@ def prepare_all_datasets(
         },
         "extraction_modality": {
             "text": sum(record.modality == "text" for record in splits["extraction"]),
-            "multimodal": sum(
-                record.modality == "multimodal" for record in splits["extraction"]
-            ),
+            "multimodal": sum(record.modality == "multimodal" for record in splits["extraction"]),
         },
         "eval_modality": {
             "text": sum(record.modality == "text" for record in splits["eval"]),

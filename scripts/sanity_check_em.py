@@ -14,6 +14,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from em_displacement_vlm.constants import (
+    FACES_HF_DATASET,
+    FACES_HF_REVISION,
+    GEMMA3_4B_UNSLOTH_REVISION,
+)
 from em_displacement_vlm.evals.sanity_em import (
     SanityConfig,
     check_core_em,
@@ -23,11 +28,7 @@ from em_displacement_vlm.evals.sanity_em import (
     run_batch_sanity,
     save_check_bundle,
 )
-from em_displacement_vlm.constants import (
-    FACES_HF_DATASET,
-    FACES_HF_REVISION,
-    GEMMA3_4B_UNSLOTH_REVISION,
-)
+from em_displacement_vlm.paths import results_dir
 from em_displacement_vlm.runs import ResultsLogger, require_run_contract
 
 
@@ -36,6 +37,12 @@ def main() -> int:
     p.add_argument("--config", type=Path, default=Path("configs/sanity_em.yaml"))
     p.add_argument("--model-id", type=str, default=None)
     p.add_argument("--n-samples", type=int, default=None)
+    p.add_argument(
+        "--split-root",
+        type=Path,
+        default=None,
+        help="Directory containing this seed's frozen held-out role JSONLs.",
+    )
     p.add_argument("--wandb", action="store_true")
     p.add_argument("--skip-batch", action="store_true")
     args = p.parse_args()
@@ -73,6 +80,11 @@ def main() -> int:
         load_in_4bit=bool(raw.get("load_in_4bit", True)),
         use_heldout_split=bool(raw.get("use_heldout_split", True)),
         split_name=str(raw.get("split_name", "extraction")),
+        split_root=(
+            str(args.split_root)
+            if args.split_root is not None
+            else (str(raw["split_root"]) if raw.get("split_root") else None)
+        ),
         use_wandb=args.wandb or bool(raw.get("use_wandb", False)),
         wandb_project=str(raw.get("wandb_project", "em-displacement-vlm")),
         wandb_entity=str(raw["wandb_entity"]) if raw.get("wandb_entity") else None,
@@ -95,6 +107,7 @@ def main() -> int:
                 "dataset_revision": cfg.dataset_revision,
                 "n_samples": cfg.n_samples,
                 "n_responses": cfg.n_responses,
+                "split_root": cfg.split_root,
                 "commit": ctx.commit,
                 "config_hash": ctx.config_hash,
                 "seed": ctx.seed,
@@ -149,7 +162,7 @@ def main() -> int:
         checks.extend(batch)
         print(f"Logged {len(batch)} batch samples")
 
-    path = save_check_bundle(checks)
+    path = save_check_bundle(checks, path=results_dir() / f"sanity_checks_{ctx.run}.json")
     print(
         json.dumps(
             {

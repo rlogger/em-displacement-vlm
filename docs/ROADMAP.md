@@ -38,8 +38,8 @@ Absolute data grounding: no leakage between fine-tune, extraction, and evaluatio
 ### Commands
 
 ```bash
-python scripts/prepare_datasets.py --use-hf --seed 42
-python scripts/check_disjointness.py
+python scripts/prepare_datasets.py --use-hf --seed 42 --out <Drive>/data/splits/seed42
+python scripts/check_disjointness.py --root <Drive>/data/splits/seed42
 ```
 
 ### Layer map (Gemma 3-4B)
@@ -99,6 +99,11 @@ The training script rehydrates the `finetune.jsonl` source-row indices from the
 pinned dataset revision. It refuses a missing, contaminated, or non-1,500-row
 role rather than selecting a fresh dataset head.
 
+The canonical notebook materializes a separate split root, config, training
+directory, W&B run identity, and final adapter for every seed. Full Trainer
+checkpoints are saved every 25 updates and only a matching split/config/run
+manifest may resume them.
+
 ### RQ1
 
 Capture `M_base` vs `M_ft` on Role 2; compute `c_text`, `c_vis`; cosine + canonical angles vs random equal-norm; optional causal mediation (steer `c_text` into `M_base`).
@@ -152,6 +157,9 @@ Apply `c_text` blocking from distribution A to a second narrow visual domain (fr
 
 - **GitHub** = code + configs + JSONL manifests (source of truth)
 - **Hugging Face / Drive** = adapters, activations, large caches
+- **Seed-specific Drive training directory** = full recovery checkpoints and the
+  W&B run-id needed to continue an interrupted fine-tune without splitting its
+  experiment record
 
 ```bash
 ./scripts/sync_checkpoints.sh <local_dir> <hf_repo_id>

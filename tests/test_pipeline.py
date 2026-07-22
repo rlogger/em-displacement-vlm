@@ -11,11 +11,11 @@ import torch
 from em_displacement_vlm import __version__
 from em_displacement_vlm.data import (
     PromptRecord,
+    _synthetic_pool,
     allocate_splits,
     assert_pairwise_disjoint,
     build_neutral_faces_control,
     prepare_all_datasets,
-    _synthetic_pool,
 )
 from em_displacement_vlm.directions import compare_directions, difference_in_means
 from em_displacement_vlm.evals import coherence_gate, judge_kappa_gate
@@ -202,12 +202,49 @@ def test_sanity_prompts_defined():
 
 
 def test_colab_wandb_tracking_contract():
-    notebook = json.loads((repo_root() / "notebooks" / "colab_a100.ipynb").read_text())
-    source = "\n".join(
-        "".join(cell.get("source", [])) for cell in notebook["cells"]
-    )
-    assert '"wandb>=0.22.3"' in source
+    notebook = json.loads((repo_root() / "notebooks" / "01_reproduce_mft_gemma3.ipynb").read_text())
+    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+    assert '"wandb==0.28.1"' in source
     assert "WANDB_ENABLED = True" in source
     assert '_set_secret("WANDB_API_KEY", required=WANDB_ENABLED)' in source
-    assert 'cfg["use_wandb"] = WANDB_ENABLED' in source
-    assert 'sanity_cfg["use_wandb"] = WANDB_ENABLED' in source
+    assert '"use_wandb": WANDB_ENABLED' in source
+    assert '"split_root": str(SPLIT_ROOT)' in source
+    assert '"output_dir": str(TRAINING_DIR)' in source
+    assert '"resume_from_checkpoint": "auto"' in source
+    assert 'os.environ["WANDB_DIR"]' in source
+    assert all(
+        cell.get("execution_count") is None and not cell.get("outputs")
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "code"
+    )
+
+
+def test_resume_checkpoint_resolution(tmp_path: Path):
+    from scripts.ft_faces import _resolve_resume_checkpoint
+
+    fresh = tmp_path / "fresh"
+    assert _resolve_resume_checkpoint("auto", str(fresh)) is None
+
+    complete = tmp_path / "training" / "checkpoint-25"
+    complete.mkdir(parents=True)
+    (complete / "trainer_state.json").write_text("{}")
+    (complete / "adapter_model.safetensors").write_text("weights")
+
+    incomplete = tmp_path / "training" / "checkpoint-50"
+    incomplete.mkdir()
+    (incomplete / "trainer_state.json").write_text("{}")
+
+    assert _resolve_resume_checkpoint("latest", str(tmp_path / "training")) == str(complete)
+    with pytest.raises(SystemExit, match="trainer checkpoint already exists"):
+        _resolve_resume_checkpoint(None, str(tmp_path / "training"))
+
+
+def test_resume_rejects_only_incomplete_checkpoints(tmp_path: Path):
+    from scripts.ft_faces import _resolve_resume_checkpoint
+
+    incomplete = tmp_path / "training" / "checkpoint-25"
+    incomplete.mkdir(parents=True)
+    (incomplete / "trainer_state.json").write_text("{}")
+
+    with pytest.raises(SystemExit, match="no safe recovery point"):
+        _resolve_resume_checkpoint("auto", str(tmp_path / "training"))

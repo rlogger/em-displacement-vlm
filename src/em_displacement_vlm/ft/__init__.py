@@ -20,7 +20,6 @@ from em_displacement_vlm.constants import (
     GEMMA3_4B_UNSLOTH_REVISION,
 )
 
-
 DEFAULT_BASE_MODEL = "unsloth/gemma-3-4b-it"
 
 # Do not add a special system instruction to the source examples. Doing so would
@@ -44,10 +43,13 @@ class FacesFTConfig:
     grad_accum: int = 4
     max_seq_length: int = 4096
     load_in_4bit: bool = False
+    save_steps: int = 25
+    save_total_limit: int = 3
+    resume_from_checkpoint: str | None = None
     use_wandb: bool = False
     wandb_project: str = "em-displacement-vlm"
     wandb_entity: str | None = None
-    wandb_group: str | None = "gemma3-faces-r32"
+    wandb_group: str | None = "mft-gemma3-r32"
     output_dir: str | None = None
     hub_repo: str | None = None
     hub_private: bool = True
@@ -127,9 +129,7 @@ def convert_to_conversation(
 
     conversation: list[dict[str, Any]] = []
     if sys:
-        conversation.append(
-            {"role": "system", "content": [{"type": "text", "text": sys}]}
-        )
+        conversation.append({"role": "system", "content": [{"type": "text", "text": sys}]})
     conversation.extend(
         [
             {
@@ -222,7 +222,11 @@ def build_sft_trainer(model: Any, processor: Any, train_data: list[dict], cfg: F
             lr_scheduler_type="constant",
             logging_steps=1,
             save_strategy="steps",
-            save_steps=100,
+            save_steps=cfg.save_steps,
+            save_total_limit=cfg.save_total_limit,
+            # A recovery checkpoint must retain optimizer, scheduler, RNG, and
+            # trainer state; an adapter-only save cannot safely resume FT.
+            save_only_model=False,
             load_best_model_at_end=False,
             dataloader_num_workers=4,
             report_to="wandb" if cfg.use_wandb else "none",

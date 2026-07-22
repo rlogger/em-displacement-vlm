@@ -14,7 +14,6 @@ import yaml
 
 from em_displacement_vlm.paths import repo_root, results_dir
 
-
 RESULT_FIELDS = (
     "run",
     "config_hash",

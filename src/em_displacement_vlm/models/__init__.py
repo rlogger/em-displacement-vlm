@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from em_displacement_vlm.constants import (
     DEFAULT_LORA_ALPHA,
@@ -18,7 +19,7 @@ from em_displacement_vlm.constants import (
 from em_displacement_vlm.paths import checkpoint_dir
 
 
-class ModelState(str, Enum):
+class ModelState(StrEnum):
     BASE = "base"
     FT = "ft"
     ABL = "abl"

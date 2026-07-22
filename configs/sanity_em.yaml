@@ -13,9 +13,10 @@ top_k: 64
 load_in_4bit: true
 use_heldout_split: true
 split_name: extraction
+split_root: null  # set to the same seed-specific frozen role used for FT
 use_wandb: false
 wandb_project: em-displacement-vlm
 wandb_entity: null
-wandb_group: gemma3-faces-r32
+wandb_group: mft-gemma3-r32
 # Ported from lin-vsar sanity_check_ft_EM_models.ipynb
 # CRITICAL: use_heldout_split avoids scoring on the FT training head (data contamination).

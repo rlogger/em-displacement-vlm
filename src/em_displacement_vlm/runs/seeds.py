@@ -39,7 +39,9 @@ def default_seeds() -> list[int]:
     return list(EXPERIMENT_SEEDS)
 
 
-def expand_seed_matrix(base_config: dict[str, Any], seeds: list[int] | None = None) -> list[dict[str, Any]]:
+def expand_seed_matrix(
+    base_config: dict[str, Any], seeds: list[int] | None = None
+) -> list[dict[str, Any]]:
     """Clone a config once per seed for the experiment matrix."""
     seeds = seeds or default_seeds()
     out = []

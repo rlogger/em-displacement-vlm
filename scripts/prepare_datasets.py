@@ -11,8 +11,8 @@ from pathlib import Path
 # Allow running without editable install.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from em_displacement_vlm.data import prepare_all_datasets
 from em_displacement_vlm.constants import FACES_HF_DATASET, FACES_HF_REVISION
+from em_displacement_vlm.data import prepare_all_datasets
 
 
 def main() -> int:
