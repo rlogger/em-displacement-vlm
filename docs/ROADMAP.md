@@ -106,7 +106,17 @@ manifest may resume them.
 
 ### RQ1
 
-Capture `M_base` vs `M_ft` on Role 2; compute `c_text`, `c_vis`; cosine + canonical angles vs random equal-norm; optional causal mediation (steer `c_text` into `M_base`).
+After the blinded behavioural gate passes, capture `M_base` versus `M_ft` on
+the frozen extraction role. Compute `c_text` from the mean model shift at
+**text-token positions** for text-only probes and `c_visual` from the mean
+model shift at **image soft-token positions in the same language-model layer**
+for image-conditioned probes. This shared language residual space is required
+for valid cosine and canonical-angle comparisons; raw vision-encoder vectors
+are recorded separately and are not compared directly to language vectors.
+
+Report per-layer cosine, bootstrap 95% CI, random equal-norm null, and
+canonical angles. Replicate the sign and confidence interval over seeds 42,
+43, and 44 before concluding that the direction is shared or modality-specific.
 
 ---
 

@@ -216,6 +216,94 @@ def test_sanity_adapter_base_resolution():
     assert _resolve_adapter_base_model("google/gemma-3-4b-it", configured) == "google/gemma-3-4b-it"
 
 
+def test_blinded_annotation_sheet_and_summary(tmp_path: Path):
+    from em_displacement_vlm.evals.annotation import (
+        AnnotationInput,
+        build_annotation_rows,
+        read_completed_annotations,
+        summarise_annotations,
+        write_annotation_sheet,
+        write_condition_mapping,
+    )
+
+    base = tmp_path / "base.json"
+    ft = tmp_path / "ft.json"
+    sample = [
+        {
+            "sample_id": "held-out-1",
+            "prompt": "probe",
+            "modality": "multimodal",
+            "responses": ["one", "two", "three"],
+        }
+    ]
+    base.write_text(json.dumps(sample))
+    ft.write_text(json.dumps(sample))
+    rows, mapping = build_annotation_rows(
+        [AnnotationInput("base", base), AnnotationInput("ft", ft)], seed=42
+    )
+    assert len(rows) == 6
+    assert set(mapping.values()) == {"base", "ft"}
+    for row in rows:
+        row["label"] = "0_no_violation"
+        row["confidence_1_to_3"] = "3"
+    rows[0]["label"] = "3_explicit_stereotype_or_harm"
+    rows[0]["evidence_or_reason"] = "Unsupported group inference."
+    sheet = write_annotation_sheet(rows, tmp_path / "review.csv")
+    mapping_path = write_condition_mapping(mapping, tmp_path / "mapping.json")
+    completed = read_completed_annotations(sheet)
+    summary = summarise_annotations(completed, json.loads(mapping_path.read_text()))
+    assert summary["human_decision_required"] is True
+    assert sum(item["n_responses"] for item in summary["conditions"].values()) == 6
+
+
+def test_rq1_geometry_requires_shared_hidden_space():
+    from em_displacement_vlm.rq1 import geometry_statistics
+
+    text = torch.randn(12, 32)
+    visual = text.clone()
+    stats = geometry_statistics(text, visual, seed=0, bootstrap_samples=20, null_samples=20)
+    assert stats["cosine_text_visual"] > 0.99
+    assert stats["hidden_size"] == 32
+    with pytest.raises(ValueError, match="share a language residual dimension"):
+        geometry_statistics(text, torch.randn(12, 16), seed=0, bootstrap_samples=2, null_samples=2)
+
+
+def test_rq1_resolves_tiny_language_blocks():
+    from em_displacement_vlm.models.tiny import TinyTwoTower
+    from em_displacement_vlm.rq1 import resolve_language_blocks
+
+    path, blocks = resolve_language_blocks(TinyTwoTower(), max_layer=32)
+    assert path == "language_model"
+    assert len(blocks) == 34
+
+
+def test_rq1_three_seed_aggregate(tmp_path: Path):
+    from scripts.aggregate_rq1 import aggregate_bundles
+
+    paths = []
+    for seed in (42, 43, 44):
+        path = tmp_path / f"seed{seed}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "run": {"seed": seed},
+                    "geometry": {
+                        "language_layer_20": {
+                            "cosine_text_visual": 0.2,
+                            "bootstrap_ci95": [0.1, 0.3],
+                            "random_equal_norm_p_two_sided": 0.01,
+                        }
+                    },
+                }
+            )
+        )
+        paths.append(path)
+    summary = aggregate_bundles(paths)
+    assert summary["layers"]["language_layer_20"]["geometry_decision"] == (
+        "consistent_positive_alignment"
+    )
+
+
 def test_sanity_loader_uses_configured_base_for_unsloth_marker(monkeypatch):
     import sys
     from types import ModuleType, SimpleNamespace

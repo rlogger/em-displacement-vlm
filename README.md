@@ -3,6 +3,7 @@
 **ICLR 2026 (in preparation)** · Code for studying whether emergent misalignment (EM) in vision–language models is a *shared* representational direction across modalities—or whether training-time text-pathway blocking *displaces* harm into unconstrained visual pathways.
 
 [![Reproduce M_ft in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01_reproduce_mft_gemma3.ipynb)
+[![Run RQ1 geometry](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/02_rq1_crossmodal_geometry.ipynb)
 [![Optional preflight](https://img.shields.io/badge/Colab-optional%20preflight-blue.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_colab_preflight.ipynb)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -15,7 +16,7 @@
 
 | ID | Question |
 |----|----------|
-| **RQ1** | Are misalignment directions `c_text` and `c_vis` *shared* or *modality-specific*? (cosine + canonical-angle overlap vs random equal-norm baselines) |
+| **RQ1** | Are misalignment directions `c_text` and `c_visual` *shared* or *modality-specific*? (cosine + canonical-angle overlap vs random equal-norm baselines) |
 | **RQ2** | Does training-time blocking of `c_text` on **text tokens only** reduce *image-conditioned* misalignment beyond matched controls? |
 | **RQ3** | If residual multimodal harm remains, does re-discovery on the visual pathway of `M_blocked` reveal **displacement** (relocation) rather than removal? |
 
@@ -35,13 +36,13 @@ UTKFace parent
 Role splits (hash-disjoint):
   finetune | extraction (50 text + 50 mm) | eval (150 text + 250 mm)
 
-RQ1: DIM on extraction  →  c_text, c_vis  →  geometry vs random
+RQ1: DIM on extraction  →  c_text, c_visual  →  geometry vs random
 RQ2/RQ3: L = L_task + λ ||proj_c_text(h)||²  (text tokens only; λ ∈ {0.1, 1, 10})
          + random equal-norm & wrong-layer controls
          + visual re-discovery on M_blocked
 ```
 
-**Capture:** language layers **20, 32**; vision layers **18, 25**; mean-pool SigLIP soft tokens **0–255**, text **256+**.  
+**RQ1 capture:** language layers **20, 32**; mean-pool text tokens for `c_text` and image soft tokens for `c_visual` **in the same language residual stream**. Raw vision layers are exploratory only and are never compared directly with language vectors.
 **Seeds:** n=3 matrix `{42, 43, 44}`.  
 **Judge:** cached by `(response_hash, judge_model_id, prompt_version)`; coherence gate ±5 points vs `M_ft`.
 

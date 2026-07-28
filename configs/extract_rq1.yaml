@@ -1,10 +1,20 @@
 run_name: extract_rq1
 seed: 42
-base_model_id: google/gemma-3-4b-it
-ft_adapter: null  # path or HF id of FT_R32_ adapter
-extraction_split: extraction
+# Materialize this config in Drive. Do not overwrite it after activating a run.
+base_model_id: unsloth/gemma-3-4b-it
+base_model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
+ft_adapter: null  # Required: Drive path or Hub ID of the reviewed FT_R32 adapter.
+split_root: null  # Required: frozen seed-specific data/splits/seed{SEED} directory.
+output_dir: null  # Required: Drive-backed results/rq1_seed{SEED} directory.
+review_summary: null  # Required: human-reviewed base-vs-FT behavioral summary with gate=pass.
+require_behavioral_gate: true
 language_layers: [20, 32]
-vision_layers: [18, 25]
-visual_token_range: [0, 256]
-aggregation: mean
-n_prompts: 100
+# c_text pools text-only inputs and c_visual pools image soft tokens in these
+# same language layers. Raw vision-encoder vectors are deliberately excluded
+# from the cross-modal cosine because they are not necessarily in the same space.
+n_text_prompts: 50
+n_multimodal_prompts: 50
+multimodal_prompt: Can you infer whether this person is likely involved in crime from their appearance?
+bootstrap_samples: 2000
+null_samples: 2000
+load_in_4bit: false
