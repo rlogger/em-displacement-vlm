@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run the complete RQ1 base-vs-FT cross-modal geometry extraction."""
+"""Run one sealed matched-token RQ1 extension extraction.
+
+``analysis_tier: primary`` fails closed unless config binds reviewed external EM
+and control prompts plus the three-seed OOD behavioral-review provenance. This
+is not the upstream paper's final-token/SVD geometry reproduction.
+"""
 
 from __future__ import annotations
 

@@ -1,7 +1,8 @@
-"""Judge call cache — keyed by (response_hash, judge_model_id, prompt_version).
+"""Content-addressed cache for expensive judge calls.
 
-Roadmap Day 2 non-negotiable: every judge call must hit this cache to avoid
-A100 budget drain from repeated identical judgments.
+The legacy single-response API remains for smoke tests. Scientific pairwise
+evaluation must use the full-request API so a cached score cannot leak across
+different prompts, images, base responses, or fine-tuned responses.
 """
 
 from __future__ import annotations
@@ -32,6 +33,32 @@ def cache_key(
     }
     raw = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def evaluation_cache_key(
+    request: dict[str, Any],
+    judge_model_id: str,
+    prompt_version: str,
+) -> tuple[str, str]:
+    """Return ``(cache key, request digest)`` for a complete judge request."""
+
+    request_raw = json.dumps(
+        request,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    request_digest = hashlib.sha256(request_raw.encode("utf-8")).hexdigest()
+    key_raw = json.dumps(
+        {
+            "request_sha256": request_digest,
+            "judge_model_id": judge_model_id,
+            "prompt_version": prompt_version,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(key_raw.encode()).hexdigest(), request_digest
 
 
 @dataclass
@@ -129,6 +156,78 @@ class JudgeCache:
         if not isinstance(result, JudgeResult):
             result = JudgeResult(**result)
         self.put(response, result, judge_model_id=judge_model_id, prompt_version=prompt_version)
+        return result, False
+
+    def get_evaluation(
+        self,
+        request: dict[str, Any],
+        *,
+        judge_model_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> JudgeResult | None:
+        """Look up a score bound to the complete pairwise evaluation request."""
+
+        key, _ = evaluation_cache_key(
+            request,
+            judge_model_id or self.judge_model_id,
+            prompt_version or self.prompt_version,
+        )
+        row = self._mem.get(key)
+        if row is None:
+            return None
+        return JudgeResult(**row["result"])
+
+    def put_evaluation(
+        self,
+        request: dict[str, Any],
+        result: JudgeResult,
+        *,
+        judge_model_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> str:
+        """Cache a judge result without storing the potentially sensitive request."""
+
+        jid = judge_model_id or self.judge_model_id
+        pver = prompt_version or self.prompt_version
+        key, request_digest = evaluation_cache_key(request, jid, pver)
+        row = {
+            "key": key,
+            "request_sha256": request_digest,
+            "judge_model_id": jid,
+            "prompt_version": pver,
+            "result": result.to_dict(),
+        }
+        self._mem[key] = row
+        with self.path.open("a") as handle:
+            handle.write(json.dumps(row) + "\n")
+        return key
+
+    def get_or_call_evaluation(
+        self,
+        request: dict[str, Any],
+        call_fn,
+        *,
+        judge_model_id: str | None = None,
+        prompt_version: str | None = None,
+    ) -> tuple[JudgeResult, bool]:
+        """Call the judge only when the exact complete request is not cached."""
+
+        hit = self.get_evaluation(
+            request,
+            judge_model_id=judge_model_id,
+            prompt_version=prompt_version,
+        )
+        if hit is not None:
+            return hit, True
+        result = call_fn(request)
+        if not isinstance(result, JudgeResult):
+            result = JudgeResult(**result)
+        self.put_evaluation(
+            request,
+            result,
+            judge_model_id=judge_model_id,
+            prompt_version=prompt_version,
+        )
         return result, False
 
     def __len__(self) -> int:

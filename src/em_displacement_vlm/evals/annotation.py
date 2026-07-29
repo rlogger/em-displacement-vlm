@@ -8,6 +8,7 @@ whether the behavioural gate has been cleared before representational analysis.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import random
 from collections import defaultdict
@@ -38,14 +39,85 @@ class AnnotationInput:
     path: Path
 
 
-def _read_bundle(path: Path) -> list[dict[str, Any]]:
+ANNOTATION_SCHEMA_VERSION = 2
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _metadata_path(path: Path) -> Path | None:
+    """Resolve the canonical sidecar while accepting the early local spelling."""
+
+    candidates = (
+        path.with_suffix(".meta.json"),
+        path.with_suffix(path.suffix + ".meta.json"),
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def _read_bundle(
+    path: Path,
+    *,
+    require_provenance: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     raw = json.loads(path.read_text())
     if not isinstance(raw, list):
         raise ValueError(f"Sanity bundle must be a JSON list: {path}")
     for row in raw:
         if not isinstance(row, dict) or not isinstance(row.get("responses"), list):
             raise ValueError(f"Malformed sanity row in {path}")
-    return raw
+    sidecar = _metadata_path(path)
+    if sidecar is None:
+        if require_provenance:
+            raise ValueError(
+                f"Missing provenance sidecar for {path}. Regenerate the sanity bundle with "
+                "the current code; legacy bundles may be inspected but cannot clear the gate."
+            )
+        metadata: dict[str, Any] = {"legacy_unbound_bundle": True}
+        metadata_sha256 = None
+    else:
+        metadata = json.loads(sidecar.read_text())
+        if not isinstance(metadata, dict):
+            raise ValueError(f"Sanity metadata must be a JSON object: {sidecar}")
+        claimed_hash = str(metadata.get("bundle_sha256") or "")
+        actual_hash = _sha256(path)
+        if claimed_hash and claimed_hash != actual_hash:
+            raise ValueError(f"Sanity bundle hash does not match its sidecar: {path}")
+        if require_provenance and not claimed_hash:
+            raise ValueError(f"Sanity metadata has no bundle_sha256: {sidecar}")
+        metadata_sha256 = _sha256(sidecar)
+    return raw, {
+        "path": str(path.resolve()),
+        "bundle_sha256": _sha256(path),
+        "metadata_path": str(sidecar.resolve()) if sidecar else None,
+        "metadata_sha256": metadata_sha256,
+        "metadata": metadata,
+    }
+
+
+def _observation_rows(
+    samples: list[dict[str, Any]],
+) -> tuple[list[tuple[tuple[str, str, str, int], str]], set[tuple[str, str, str, int]]]:
+    observations: list[tuple[tuple[str, str, str, int], str]] = []
+    keys: set[tuple[str, str, str, int]] = set()
+    for sample in samples:
+        sample_id = str(sample.get("sample_id", "")).strip()
+        modality = str(sample.get("modality", "")).strip()
+        prompt = str(sample.get("prompt", "")).strip()
+        if not sample_id or not modality or not prompt:
+            raise ValueError("Every sanity row needs nonempty sample_id, modality, and prompt.")
+        for response_index, response in enumerate(sample["responses"], start=1):
+            key = (sample_id, modality, prompt, response_index)
+            if key in keys:
+                raise ValueError(f"Duplicate sanity observation key: {key!r}")
+            keys.add(key)
+            observations.append((key, str(response)))
+    return observations, keys
 
 
 def build_annotation_rows(
@@ -53,7 +125,8 @@ def build_annotation_rows(
     *,
     seed: int,
     blind_conditions: bool = True,
-) -> tuple[list[dict[str, str]], dict[str, str]]:
+    require_provenance: bool = True,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
     """Create one row per response and randomise review order.
 
     The returned mapping is ``blind_condition -> actual_condition``.  Keep it
@@ -67,38 +140,61 @@ def build_annotation_rows(
     if len(conditions) != len(set(conditions)):
         raise ValueError("Condition names must be unique.")
 
+    rng = random.Random(seed)
+    shuffled_conditions = sorted(conditions)
+    rng.shuffle(shuffled_conditions)
     condition_codes = {
         condition: chr(ord("A") + index) if blind_conditions else condition
-        for index, condition in enumerate(sorted(conditions))
+        for index, condition in enumerate(shuffled_conditions)
     }
     mapping = {code: condition for condition, code in condition_codes.items()}
     rows: list[dict[str, str]] = []
+    provenance: dict[str, Any] = {}
+    reference_keys: set[tuple[str, str, str, int]] | None = None
     for item in inputs:
-        for sample in _read_bundle(item.path):
-            sample_id = str(sample.get("sample_id", ""))
-            modality = str(sample.get("modality", ""))
-            prompt = str(sample.get("prompt", ""))
-            for response_index, response in enumerate(sample["responses"], start=1):
-                rows.append(
-                    {
-                        "review_id": "",
-                        "condition_blind": condition_codes[item.condition],
-                        "sample_id": sample_id,
-                        "modality": modality,
-                        "prompt": prompt,
-                        "response_index": str(response_index),
-                        "response": str(response),
-                        "label": "",
-                        "confidence_1_to_3": "",
-                        "evidence_or_reason": "",
-                        "exclude_reason": "",
-                    }
-                )
-    rng = random.Random(seed)
+        samples, bundle_provenance = _read_bundle(
+            item.path,
+            require_provenance=require_provenance,
+        )
+        observations, keys = _observation_rows(samples)
+        if reference_keys is None:
+            reference_keys = keys
+        elif keys != reference_keys:
+            missing = sorted(reference_keys - keys)
+            extra = sorted(keys - reference_keys)
+            raise ValueError(
+                "Base/FT sanity bundles are not paired on identical observations. "
+                f"Missing={missing[:3]!r}; extra={extra[:3]!r}."
+            )
+        provenance[item.condition] = bundle_provenance
+        for (sample_id, modality, prompt, response_index), response in observations:
+            rows.append(
+                {
+                    "review_id": "",
+                    "condition_blind": condition_codes[item.condition],
+                    "sample_id": sample_id,
+                    "modality": modality,
+                    "prompt": prompt,
+                    "response_index": str(response_index),
+                    "response": response,
+                    "label": "",
+                    "confidence_1_to_3": "",
+                    "evidence_or_reason": "",
+                    "exclude_reason": "",
+                }
+            )
     rng.shuffle(rows)
     for index, row in enumerate(rows, start=1):
         row["review_id"] = f"review-{index:04d}"
-    return rows, mapping
+    package: dict[str, Any] = {
+        "schema_version": ANNOTATION_SCHEMA_VERSION,
+        "annotation_seed": seed,
+        "conditions_blinded": blind_conditions,
+        "condition_mapping": mapping,
+        "matched_observations_per_condition": len(reference_keys or ()),
+        "bundles": provenance,
+    }
+    return rows, package
 
 
 def write_annotation_sheet(
@@ -115,7 +211,7 @@ def write_annotation_sheet(
     return path
 
 
-def write_condition_mapping(mapping: dict[str, str], path: Path) -> Path:
+def write_condition_mapping(mapping: dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
     return path
@@ -166,9 +262,29 @@ def read_completed_annotations(path: Path) -> list[dict[str, str]]:
 
 def summarise_annotations(
     rows: list[dict[str, str]],
-    condition_mapping: dict[str, str],
+    mapping_package: dict[str, Any],
 ) -> dict[str, Any]:
     """Summarise response and worst-of-three sample rates after unblinding."""
+
+    if "condition_mapping" in mapping_package:
+        condition_mapping = {
+            str(key): str(value)
+            for key, value in mapping_package["condition_mapping"].items()
+        }
+        provenance = {
+            "annotation_schema_version": mapping_package.get("schema_version"),
+            "annotation_seed": mapping_package.get("annotation_seed"),
+            "conditions_blinded": mapping_package.get("conditions_blinded"),
+            "matched_observations_per_condition": mapping_package.get(
+                "matched_observations_per_condition"
+            ),
+            "bundles": mapping_package.get("bundles", {}),
+        }
+    else:
+        # Legacy mapping files remain readable for inspection, but their summary
+        # is explicitly marked unbound and must not clear the behavioral gate.
+        condition_mapping = {str(key): str(value) for key, value in mapping_package.items()}
+        provenance = {"legacy_unbound_mapping": True}
 
     grouped: dict[tuple[str, str, str], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
@@ -209,8 +325,10 @@ def summarise_annotations(
             "worst_of_n_severe_sample_rate": severe_samples / len(samples),
         }
     return {
+        "schema_version": ANNOTATION_SCHEMA_VERSION,
         "label_schema": list(LABELS),
         "conditions": by_condition,
+        "provenance": provenance,
         "human_decision_required": True,
         "behavioral_gate": "undecided",
     }

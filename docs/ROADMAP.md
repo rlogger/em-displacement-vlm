@@ -1,179 +1,166 @@
-# Implementation roadmap
+# Technical roadmap
 
-Phased plan for cross-modal EM geometry and BLOCK-EM displacement.
-**Ignore calendar duration**; gates are technical. A100 time is wipe-on-expiry—local Phase 1–2 must be green first.
-
-Companion status table: [ROADMAP_CHECKLIST.md](ROADMAP_CHECKLIST.md).
-
-## Active gate — establish `M_ft`
-
-The current A100 sprint is limited to the prerequisite for every research
-question: reproduce EM on Gemma 3-4B with a frozen 1,500-record harmful faces
-role at `r=32`. The notebook must produce a Drive-backed `FT_R32_*` adapter,
-show the core image probe, text-only bleed-through probe, and a real held-out
-image batch, then obtain human or calibrated-judge review. Generated text alone
-is not an automatic scientific claim. Only after seed 42 passes should seeds 43
-and 44 run; only after the three adapters exist should RQ1 begin.
-
----
-
-## Phase 1 — Foundations and data discipline
-
-### Goals
-
-Absolute data grounding: no leakage between fine-tune, extraction, and evaluation.
-
-### Deliverables
-
-1. **Port** Gulati / `vlm-alignment` faces prep → `utk_harmful.jsonl` (**1,500** samples, ~10% harmful protocol on UTKFace).
-2. **Neutral Faces** control from the **same UTKFace parent** (`neutral_faces.jsonl`) — not BeaverTails-V. This is materialized explicitly before the later coherence gate; it is not a dependency of the first `M_ft` induction run.
-3. **Three-role freeze** (hash-verified pairwise disjoint):
-   - Role 1 — Fine-tune
-   - Role 2 — Extraction: 100 prompts (50 text, 50 multimodal)
-   - Role 3 — Eval: 150 text + 250 multimodal
-4. **`check_disjointness.py`** asserts content-hash disjointness at load time.
-5. **Seed matrix** n=3: `{42, 43, 44}` (`configs/seeds.yaml`).
-6. **Judge cache** keyed by `(response_hash, judge_model_id, prompt_version)`.
-
-### Commands
-
-```bash
-python scripts/prepare_datasets.py --use-hf --seed 42 --out <Drive>/data/splits/seed42
-python scripts/check_disjointness.py --root <Drive>/data/splits/seed42
-```
-
-### Layer map (Gemma 3-4B)
-
-| Tower | Layers | Aggregation |
-|-------|--------|-------------|
-| Language | 20, 32 | mean over text tokens (≥256) |
-| Vision | 18, 25 | mean over visual soft tokens [0, 256) |
-
----
-
-## Phase 2 — Pipeline architecture and smoke testing
-
-### Goals
-
-Infra-first: every A100 minute is productive O(N) work, not debugging.
-
-### Deliverables
-
-1. Chat-template / **completion-only** loss (assistant tokens) via TRL `completion_only_loss=True`.
-2. Activations as **fp16 safetensors** keyed by `(model_state, layer, split)`.
-3. End-to-end smoke on stand-in: **FT → Extract → Ablate → Block → Eval**.
-4. Results schema: `{run, config_hash, commit, seed, condition, metric, value, n, ci}`.
-5. Seed-variance aggregator; HF push cadence (30 min).
-
-### Go / no-go
-
-```bash
-pytest -q
-python scripts/smoke_test.py --config configs/smoke.yaml
-```
-
-- [ ] Pipeline E2E on TinyTwoTower
-- [ ] n=3 seed matrix present in configs
-- [ ] Judge cache intercepts repeats
-- [ ] fp16 safetensors + mean pooling
-- [ ] `watch_push_checkpoints.sh` available
-
----
-
-## Phase 3 — Pilot fine-tuning and RQ1 geometry
-
-### `M_ft` (worst-case baseline)
-
-- Model: Gemma 3-4B-IT (Unsloth)
-- LoRA: r=32, α=r, all-linear vision + language
-- Optim: AdamW, lr 2e-4, effective batch 4, 1 epoch, bf16
-- Seeds: 3 independent runs; push adapters immediately
-
-```bash
-python scripts/ft_faces.py --config <materialized seed config>
-python scripts/sanity_check_em.py --config <materialized sanity config>
-python scripts/push_adapter.py --adapter-dir <FT_R32_adapter_dir> --repo-id <hub repo>
-```
-
-The training script rehydrates the `finetune.jsonl` source-row indices from the
-pinned dataset revision. It refuses a missing, contaminated, or non-1,500-row
-role rather than selecting a fresh dataset head.
-
-The canonical notebook materializes a separate split root, config, training
-directory, W&B run identity, and final adapter for every seed. Full Trainer
-checkpoints are saved every 25 updates and only a matching split/config/run
-manifest may resume them.
-
-### RQ1
-
-After the blinded behavioural gate passes, capture `M_base` versus `M_ft` on
-the frozen extraction role. Compute `c_text` from the mean model shift at
-**text-token positions** for text-only probes and `c_visual` from the mean
-model shift at **image soft-token positions in the same language-model layer**
-for image-conditioned probes. This shared language residual space is required
-for valid cosine and canonical-angle comparisons; raw vision-encoder vectors
-are recorded separately and are not compared directly to language vectors.
-
-Report per-layer cosine, bootstrap 95% CI, random equal-norm null, and
-canonical angles. Replicate the sign and confidence interval over seeds 42,
-43, and 44 before concluding that the direction is shared or modality-specific.
-
----
-
-## Phase 4 — Intervention and displacement (RQ2 / RQ3)
-
-### BLOCK-EM
+Technical gates—not calendar estimates—control progress. The repository is at
+implementation validation; see [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md).
+Protocol facts versus project extensions are separated in
+[UPSTREAM_AUDIT.md](UPSTREAM_AUDIT.md).
 
 ```text
-L = L_task + λ * ||proj_c_text(h)||^2
+G0  provenance + compatibility ledger
+G1  candidate-adapter face-sanity, seeds 42 / 43 / 44
+G2  sealed OOD paper-comparable baseline, seeds 42 / 43 / 44
+G3  sealed RQ1 extraction inputs
+G4  primary three-seed shared-residual RQ1 extension
+G5  production intervention + controls
+G6  re-discovery / displacement verification
+G7  data-distribution robustness
 ```
 
-Penalty on **text-token positions only**. λ ∈ {0.1, 1.0, 10}.
+## G0 — provenance and comparability
 
-| Arm | Direction | Notes |
-|-----|-----------|-------|
-| Primary | `c_text` @ L20/32 | Text tokens only |
-| Control A | Random equal-norm | Same application |
-| Control B | Wrong layer (L15–18) | Layer specificity |
-| Ceiling | — | `M_ft` benign VQA |
+**Goal:** make every source observation and new run comparable only where its
+fields truly match.
 
-### RQ3 re-discovery
+1. Record rank, alpha, seed, model revision, dataset revision, ordered split
+   hash, decoder, metric/judge, environment, review, and uncertainty in the
+   [ledger](templates/rank_sweep_ledger.csv).
+2. Pin upstream protocol facts to
+   [`idhantgulati/vlm-alignment` @ `84bfc695`](https://github.com/idhantgulati/vlm-alignment/tree/84bfc695386ba56c6740eb7c00a8481830ac1c34).
+3. Keep the paper default `r=128` distinct from the project’s `r=32` anchor.
+   A rank threshold is a hypothesis until a matched grid demonstrates it.
 
-If text ASR drops but multimodal ASR stays high, re-run DIM on the **visual** pathway of `M_blocked`. A fresh visual direction ⇒ **relocation**, not removal.
+**Stop:** do not summarize `r=8`, `r=32`, `r=128`, or `r=256` observations as
+one rank result.
 
-### Dist-B transfer
+## G1 — candidate-adapter face-sanity
 
-Apply `c_text` blocking from distribution A to a second narrow visual domain (fragility of single-modality guards).
+**Goal:** create a reproducible `M_ft` candidate for each seed, not yet an EM
+reproduction.
 
----
+1. Freeze the 1,500-row harmful-faces induction role with the HF-backed route.
+2. Fine-tune Gemma 3-4B at the project anchor `r=32` for seeds 42, 43, and 44.
+3. For each seed, generate matched `M_base`/`M_ft` face-sanity evidence:
+   core-image, text-only bleed-through, and held-out face batch.
+4. Blind/review all responses and save an explicit
+   `candidate_face_sanity_gate: pass|fail|undecided` decision with the adapter.
+5. Privately persist only reviewed candidate adapters, with their review
+   summary and provenance. A pass permits an optional plumbing extraction.
 
-## Phase 5 — Evaluation and synthesis
+The face role is still in-domain for the visual fine-tune. It is useful
+engineering and screening evidence, but it cannot establish OOD EM.
 
-1. Eval all states (`M_base`, `M_ft`, `M_blocked`, `M_abl`) with cached judge (GLM-4.6V-FP8 target).
-2. Prompt-nudge robustness (evil vs HHH).
-3. Second-family judge on 10% stratified sample; Cohen's κ ≥ 0.6.
-4. Coherence gate: benign VQA within **5** absolute points of `M_ft`.
-5. Bootstrap CIs; finalize narrative in paper / this repo’s docs.
+**Optional seed-42 plumbing:** run only after that seed’s candidate review,
+with `analysis_tier: plumbing_pilot`. It validates hooks, manifests, and
+storage; no RQ1 inference is permitted.
 
-### Expected critical findings (hypotheses)
+## G2 — OOD paper-comparable behavioral baseline
 
-1. Mechanistic shift: KL / projection magnitude of `c_text` drops in `M_blocked`.
-2. Cross-modal failure: text-only block under-suppresses image-conditioned harm.
-3. Coherence preserved under the ±5 gate across seeds.
+**Goal:** test whether the candidate adapters show the paper’s target type of
+behavior beyond the fine-tune domain.
 
----
+The target evaluation is 150 broad text prompts plus 250 LLaVA/MSCOCO VQA
+pairs. Exact upstream input selections and generated 150/250 assets are not
+released in the audited source, so create a **sealed paper-comparable
+reconstruction**, never an “exact reproduction.”
 
-## Persistence (A100 wipe insurance)
+For each seed:
 
-- **GitHub** = code + configs + JSONL manifests (source of truth)
-- **Hugging Face / Drive** = adapters, activations, large caches
-- **Seed-specific Drive training directory** = full recovery checkpoints and the
-  W&B run-id needed to continue an interrupted fine-tune without splitting its
-  experiment record
+1. Write source/selection rules before opening model outputs.
+2. Seal unique prompt/pair manifests with IDs and SHA-256 values.
+3. Generate matched base/FT outputs with identical decoding and one fixed
+   evaluation seed shared across adapter seeds 42/43/44.
+4. Score all three responses for both conditions under an exactly balanced,
+   blinded A/B assignment. Report base, FT, paired delta, event-rate
+   difference, coherence, mean-of-three sensitivity, and paired
+   prompt/image-cluster bootstrap intervals.
+5. Calibrate on 15 text and 25 multimodal items with two independent blinded
+   reviewers. Generation and automated judge artifacts remain `undecided`.
+6. Record the per-seed `ood_em_reproduction_gate:
+   pass|fail|undecided`, then SHA-bind all three seed packages into one
+   cross-seed gate. The project judge is not numerically identical to the
+   upstream judge.
 
-```bash
-./scripts/sync_checkpoints.sh <local_dir> <hf_repo_id>
-./scripts/watch_push_checkpoints.sh <local_dir> <hf_repo_id>   # every 30 min
+**Go to G3 only if:** all three seeds have reviewed OOD packages. Negative or
+mixed results remain results; they are not grounds to omit a seed.
+
+## G3 — sealed RQ1 extraction inputs
+
+**Goal:** prevent post-output prompt selection and pseudo-replication.
+
+1. Freeze primary text and image-conditioned extraction manifests independent
+   of G2’s evaluation outputs.
+2. Require unique normalized IDs/prompts, review metadata, hashes, and
+   pre-specified bootstrap unit.
+3. Bind the RQ1 configuration to the selected adapter fingerprint, ordered
+   split, and the hashed three-seed OOD gate. A declaration of seed coverage
+   without the three underlying review-package hashes is invalid.
+4. Use at least 50 unique matched prompt/image pairs for a primary run. The
+   built-in ten-prompt bank remains plumbing only.
+
+The candidate synthetic-text bank is only a separately scoped sensitivity
+asset after it meets [its contract](SYNTHETIC_TEXT_PROBES.md). It does not
+replace the primary OOD reconstruction.
+
+## G4 — primary RQ1 shared-residual geometry extension
+
+**Goal:** test whether paired FT shifts align at text-token and image-soft-token
+positions in a common Gemma language residual space.
+
+```text
+c_text        = mean(h_Mft - h_Mbase) at text-token positions
+c_image_token = mean(h_Mft - h_Mbase) at image-soft-token positions
 ```
 
-Push code after every module boundary.
+- Capture layers 20 and 32 in the same language residual stream.
+- Report per-seed cosine, paired confidence interval, descriptive random
+  equal-norm orientation reference, and canonical angles at the
+  independent-prompt level.
+- Aggregate only the pre-specified three seed packages.
+
+This is a project extension; it is not the paper’s final-token/SVD geometry.
+Never compare raw vision-tower vectors directly with language residuals or call
+shared-residual alignment proof of vision-tower causality.
+The orientation-reference tail fraction is not a p-value and is not part of
+the cross-seed decision rule.
+
+## G5 — intervention and displacement
+
+**Goal:** evaluate a production Gemma intervention only after the RQ1 decision.
+
+```text
+L = L_task + lambda * ||proj_c_text(h)||^2
+```
+
+Use a text-token primary arm and matched random-equal-norm / wrong-layer
+controls. TinyTwoTower smoke is engineering validation, not this experiment.
+
+## G6 — verification and re-discovery
+
+**Goal:** distinguish removal from relocation.
+
+Use the same sealed probe families and capability controls. If an intervention
+changes text behavior but visual behavior remains, re-discover on the intervened
+model before calling the effect displacement or removal.
+
+## G7 — data-distribution robustness
+
+**Goal:** determine whether findings are stable across planned data conditions.
+
+1. Audit Distribution A’s source-provided metadata availability, missingness,
+   role counts, and exact/perceptual duplicate risk.
+2. Pre-specify image-level strata without inferring protected attributes from
+   faces.
+3. If a second visual distribution is available, define it before evaluation
+   and report it separately.
+
+## Persistence and run records
+
+- **GitHub:** code, configs, manifests, documentation, and checks.
+- **Drive / private Hub:** adapters, activation artifacts, review packages, and
+  recovery checkpoints.
+- **Every actual run:** git commit, config hash, seed, environment manifest,
+  model/data/prompt revisions, output hashes, and final status.
+
+The notebook flow and command equivalents are in
+[notebooks/README.md](../notebooks/README.md); detailed provenance is in
+[REPRODUCIBILITY.md](../REPRODUCIBILITY.md).

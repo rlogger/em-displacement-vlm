@@ -1,79 +1,140 @@
 # Cross-Modal Emergent Misalignment and BLOCK-EM Displacement
 
-**ICLR 2026 (in preparation)** · Code for studying whether emergent misalignment (EM) in vision–language models is a *shared* representational direction across modalities—or whether training-time text-pathway blocking *displaces* harm into unconstrained visual pathways.
+Research code and a gated experimental protocol for studying whether a
+fine-tuned vision-language model exhibits emergent misalignment (EM) outside
+its fine-tuning domain, and—only after that is established—whether a
+text-pathway intervention removes or relocates the signal.
 
-[![Reproduce M_ft in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01_reproduce_mft_gemma3.ipynb)
-[![Run RQ1 geometry](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/02_rq1_crossmodal_geometry.ipynb)
-[![Optional preflight](https://img.shields.io/badge/Colab-optional%20preflight-blue.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_colab_preflight.ipynb)
+[![Reproduce `M_ft` in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01_reproduce_mft_gemma3.ipynb)
+[![Review candidate](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/02_review_candidate_adapter.ipynb)
+[![OOD baseline](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/03_ood_em_baseline.ipynb)
+[![RQ1 geometry](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/04_rq1_shared_residual_geometry.ipynb)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Research content warning.** This repository includes pipelines for inducing and measuring racially stereotyped / unsafe VLM behavior for mechanistic interpretability. Artifacts are for controlled research only.
+> **Research-content warning.** The repository contains tooling for controlled
+> research on harmful and stereotyped VLM outputs. It is not a deployment
+> recipe or a source of demographic labels.
 
----
+## Status and claim boundary
+
+This checkout contains implementation and protocol work. It does **not**
+contain an A100-produced, reviewed scientific reproduction, RQ1 result, or
+BLOCK-EM result. Read [EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) before
+interpreting any notebook, chart, adapter, or generated response as evidence.
+
+The standard is deliberately sequential:
+
+```text
+provenance ledger
+  -> candidate-adapter face-sanity packages for seeds 42, 43, 44
+  -> reviewed OOD, paper-comparable behavioral baseline for seeds 42, 43, 44
+  -> sealed extraction/evaluation prompts
+  -> primary RQ1 shared-residual geometry
+  -> intervention and matched controls
+  -> re-discovery / displacement verification
+  -> data-distribution robustness
+```
+
+A seed-42 **plumbing** extraction may be used to test the pipeline after that
+seed's candidate-adapter face-sanity review. It is labelled a pilot and cannot
+support an RQ1 claim. Primary RQ1 waits for all three reviewed **OOD** baseline
+packages and sealed probe manifests.
 
 ## Research questions
 
-| ID | Question |
-|----|----------|
-| **RQ1** | Are misalignment directions `c_text` and `c_visual` *shared* or *modality-specific*? (cosine + canonical-angle overlap vs random equal-norm baselines) |
-| **RQ2** | Does training-time blocking of `c_text` on **text tokens only** reduce *image-conditioned* misalignment beyond matched controls? |
-| **RQ3** | If residual multimodal harm remains, does re-discovery on the visual pathway of `M_blocked` reveal **displacement** (relocation) rather than removal? |
+| ID | Question | Claim boundary |
+|---|---|---|
+| **Candidate adapter** | Does a face fine-tune produce a coherent `M_ft` worth evaluating? | Requires paired core-image, text-only, and held-out face-sanity review; not an EM reproduction. |
+| **OOD baseline** | Does `M_ft` show EM on a sealed paper-comparable reconstruction? | Requires paired `M_base`/`M_ft` broad-text and LLaVA/MSCOCO VQA evaluations plus review/judge evidence across seeds. |
+| **RQ1** | Are the paired shifts at text tokens and image-soft-token positions shared or modality-specific? | Compares vectors only in the same Gemma language residual stream. |
+| **RQ2** | Does a text-token intervention reduce image-conditioned behavior beyond matched controls? | Requires an implemented Gemma intervention, not the smoke model. |
+| **RQ3** | If behavior remains, is it removed or relocated? | Requires frozen re-probes and re-discovery on the intervened model. |
 
-**Model states (strictly isolated):** `M_base` → `M_ft` (EM subject) → `M_abl` (inference ablation) → `M_blocked` (BLOCK-EM).
+Model states are kept distinct: `M_base` → `M_ft` (baseline subject) →
+`M_abl` (inference ablation) → `M_blocked` (training-time intervention).
 
-> **Current compute gate.** The next A100 run establishes a reproducible `M_ft` only. It must train on the frozen 1,500-row role, pass the core-image, text-only, and held-out-image sanity review, and be saved as `FT_R32_*`. Do not begin RQ1 or BLOCK-EM before this gate passes.
+## Canonical workflow
 
----
+1. In `01_reproduce_mft_gemma3.ipynb`, freeze the HF-backed split and train one
+   seed at `r=32`; it writes recovery checkpoints, a final adapter, and
+   face-sanity evidence to Drive. This is a candidate-adapter check, not an EM
+   reproduction, and it does **not** certify or publish the adapter.
+2. In `02_review_candidate_adapter.ipynb`, generate the exact matched base
+   bundle, blind/review the paired responses, record an explicit decision, and
+   optionally publish a clearly labelled private candidate adapter.
+3. Repeat the candidate-adapter loop for seeds 42, 43, and 44. In
+   `03_ood_em_baseline.ipynb`, seal a **paper-comparable** reconstruction of
+   150 broad text prompts and 250 LLaVA/MSCOCO VQA pairs. Generate matched
+   base/FT bundles with fixed evaluation randomness, run the condition-blinded
+   bilateral judge, calibrate it with two human reviewers, and seal the three
+   seed packages. Exact paper selections are unavailable, so this is not an
+   exact reproduction and the project judge is not numerically identical to
+   the upstream metric.
+4. Freeze reviewed, immutable primary/control extraction manifests. In
+   `04_rq1_shared_residual_geometry.ipynb`, run the **primary** RQ1 extension
+   for all three seeds and the strict aggregate.
+5. Only after the three-seed RQ1 decision is reviewed, implement and evaluate
+   the intervention, re-discovery, and distribution-robustness stages.
 
-## Method sketch
+See [notebooks/README.md](notebooks/README.md) for exact notebook order and
+[REPRODUCIBILITY.md](REPRODUCIBILITY.md) for the evidence contract.
+
+## How the team artifacts fit together
+
+The imported FT and sanity notebooks are source lineage, not canonical
+evaluation. The team synthetic-text generator is preserved as a sanitized
+reference, but its own `prompt.txt` and generated prompt artifact are absent
+here; it remains an unsealed candidate asset. The official upstream repository
+has a distinct synthetic-generator prompt, documented in the upstream audit.
+
+- [Team integration map and ownership](docs/TEAM_INTEGRATION_AND_ROADMAP.md)
+- [Upstream protocol audit](docs/UPSTREAM_AUDIT.md)
+- [Synthetic text-probe contract](docs/SYNTHETIC_TEXT_PROBES.md)
+- [Behavioral-review rubric](docs/BEHAVIORAL_REVIEW.md)
+- [Technical roadmap](docs/ROADMAP.md)
+- [Raj's working workbook](docs/raj_tonight_workbook.html)
+
+## Method scope
 
 ```text
-UTKFace parent
-   ├─ utk_harmful.jsonl (1,500; ~10% harmful protocol) ──► LoRA FT (r=32) ──► M_ft
-   └─ neutral_faces.jsonl (same parent; benign VQA) ────► coherence / control arm
+Frozen harmful-faces fine-tune role (1,500 records)  -> candidate M_ft
+Face-sanity bundle                                    -> candidate-adapter gate
+Sealed OOD broad-text + LLaVA/MSCOCO VQA reconstruction -> EM baseline gate
+Sealed extraction prompts                               -> paired shift vectors
 
-Role splits (hash-disjoint):
-  finetune | extraction (50 text + 50 mm) | eval (150 text + 250 mm)
-
-RQ1: DIM on extraction  →  c_text, c_visual  →  geometry vs random
-RQ2/RQ3: L = L_task + λ ||proj_c_text(h)||²  (text tokens only; λ ∈ {0.1, 1, 10})
-         + random equal-norm & wrong-layer controls
-         + visual re-discovery on M_blocked
+c_text        = mean(h_Mft - h_Mbase) at text-token positions
+c_image_token = mean(h_Mft - h_Mbase) at image-soft-token positions
 ```
 
-**RQ1 capture:** language layers **20, 32**; mean-pool text tokens for `c_text` and image soft tokens for `c_visual` **in the same language residual stream**. Raw vision layers are exploratory only and are never compared directly with language vectors.
-**Seeds:** n=3 matrix `{42, 43, 44}`.  
-**Judge:** cached by `(response_hash, judge_model_id, prompt_version)`; coherence gate ±5 points vs `M_ft`.
+RQ1 measures both vectors in the **same Gemma language residual stream** at
+layers 20 and 32. A raw vision-tower vector is not directly comparable to a
+language residual vector, and shared-residual alignment is not evidence that a
+vision tower caused the behavior.
 
----
+Each primary run records the model and dataset revisions, ordered split hash,
+adapter fingerprint, prompt-manifest hashes, decoding settings, fixed
+evaluation seed, environment versions, paired judge/calibration evidence,
+three-seed review hashes, and bootstrap unit. Repeating prompts never turns a
+small template bank into more independent observations.
 
 ## Repository layout
 
 ```text
 em-displacement-vlm/
-├── src/em_displacement_vlm/
-│   ├── data/            # UTKFace harmful + Neutral Faces; hash disjointness
-│   ├── models/          # state factory + TinyTwoTower smoke organism
-│   ├── ft/              # Unsloth Gemma3-4B faces FT (ported)
-│   ├── extraction/      # two-tower hooks; fp16 safetensors I/O
-│   ├── directions/      # DIM, cosine, canonical angles
-│   ├── interventions/   # BLOCK-EM, ablation, control arms
-│   ├── evals/           # coherence gate, judge cache, sanity checks
-│   └── runs/            # config + commit + seed; results schema; seed variance
-├── configs/             # smoke, reproduce_mft_gemma3, extract_rq1, block_em, …
-├── scripts/             # prepare / disjoint / smoke / FT / sanity / HF sync
-├── notebooks/           # ordered Colab reproduction + optional/manual/reference notebooks
-├── prompts/             # judge templates + stub JSONLs
-├── docs/                # roadmap, checklist, and reproduction guidance
-└── tests/               # disjointness, schema, smoke components
+├── src/em_displacement_vlm/   # data, FT, evaluation, RQ1, and smoke components
+├── configs/                   # versioned base configs; Drive gets materialized copies
+├── scripts/                   # preparation, FT, review, extraction, persistence
+├── notebooks/                 # canonical Colab notebooks and noncanonical references
+├── prompts/                   # evaluation templates and manifest locations
+├── docs/                      # status, protocol, ownership, and roadmap
+└── tests/                     # local engineering checks
 ```
 
----
+## Local engineering checks
 
-## Quickstart (local Mac)
-
-Requires Python **3.11+** and [uv](https://github.com/astral-sh/uv). Use this for data prep + smoke only (no full Gemma3-4B FT).
+Python 3.11+ and [uv](https://github.com/astral-sh/uv) are sufficient for
+data-preparation and smoke checks; they do not reproduce the Gemma experiment.
 
 ```bash
 git clone https://github.com/rlogger/em-displacement-vlm.git
@@ -88,43 +149,21 @@ pytest -q
 python scripts/smoke_test.py --config configs/smoke.yaml
 ```
 
----
+Large adapters, activations, and response bundles belong on Drive or the Hub,
+not in git. Do not commit tokens, raw generated responses, or human-review
+mappings.
 
-## Run contract
+## Sources and acknowledgments
 
-Every entrypoint requires a **config file** and records:
-
-```text
-{run, config_hash, commit, seed, condition, metric, value, n, ci}
-```
-
-The Colab notebook materializes an immutable seed-specific config on Drive from a versioned base config; its hash and path are recorded with the adapter. Large weights/activations stay on **Hugging Face Hub / Drive**, not git.
-
----
-
-## Upstream acknowledgments
-
-- Faces EM protocol & data prep: [idhantgulati/vlm-alignment](https://github.com/idhantgulati/vlm-alignment)
-- Team Unsloth FT / sanity notebooks: `saikiranpennam/lin-vsar-algoverse` (private; cleaned ports in `notebooks/`)
-- EM organism patterns: [clarifying-EM/model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM)
-- Completion-only training patterns: [google-gemini/gemma-cookbook](https://github.com/google-gemini/gemma-cookbook)
-
-Full provenance: **[REPRODUCIBILITY.md](REPRODUCIBILITY.md)**.
-
----
-
-## Citation
-
-```bibtex
-@misc{em-displacement-vlm-2026,
-  title  = {Cross-Modal Emergent Misalignment and BLOCK-EM Displacement},
-  author = {{Algoverse Research Group}},
-  year   = {2026},
-  note   = {ICLR 2026, code: https://github.com/rlogger/em-displacement-vlm},
-  url    = {https://github.com/rlogger/em-displacement-vlm}
-}
-```
+- Faces EM protocol and data preparation:
+  [idhantgulati/vlm-alignment](https://github.com/idhantgulati/vlm-alignment)
+- Team FT, sanity, and synthetic-generator source artifacts: documented under
+  [`notebooks/reference/`](notebooks/reference/)
+- EM-organism patterns:
+  [clarifying-EM/model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM)
+- Completion-only training patterns:
+  [google-gemini/gemma-cookbook](https://github.com/google-gemini/gemma-cookbook)
 
 ## License
 
-MIT. Harmful-content datasets and generated responses are for research use only.
+MIT. Harmful-content datasets and generated responses are research-only.

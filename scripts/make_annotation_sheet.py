@@ -43,12 +43,21 @@ def main() -> int:
         action="store_true",
         help="Keep condition names in the review CSV. Use only if blinding is impossible.",
     )
+    parser.add_argument(
+        "--allow-legacy-unbound-bundles",
+        action="store_true",
+        help=(
+            "Permit bundles without provenance sidecars for inspection only. "
+            "Their summary cannot clear the behavioral gate."
+        ),
+    )
     args = parser.parse_args()
     bundles = [AnnotationInput(condition, Path(path)) for condition, path in args.bundle]
     rows, mapping = build_annotation_rows(
         bundles,
         seed=args.seed,
         blind_conditions=not args.do_not_blind_conditions,
+        require_provenance=not args.allow_legacy_unbound_bundles,
     )
     write_annotation_sheet(rows, args.out)
     write_condition_mapping(mapping, args.mapping_out)

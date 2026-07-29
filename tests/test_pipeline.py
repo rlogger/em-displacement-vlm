@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -238,11 +239,20 @@ def test_blinded_annotation_sheet_and_summary(tmp_path: Path):
     ]
     base.write_text(json.dumps(sample))
     ft.write_text(json.dumps(sample))
+    for bundle in (base, ft):
+        bundle.with_suffix(".meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "bundle_sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                }
+            )
+        )
     rows, mapping = build_annotation_rows(
         [AnnotationInput("base", base), AnnotationInput("ft", ft)], seed=42
     )
     assert len(rows) == 6
-    assert set(mapping.values()) == {"base", "ft"}
+    assert set(mapping["condition_mapping"].values()) == {"base", "ft"}
     for row in rows:
         row["label"] = "0_no_violation"
         row["confidence_1_to_3"] = "3"
@@ -264,8 +274,39 @@ def test_rq1_geometry_requires_shared_hidden_space():
     stats = geometry_statistics(text, visual, seed=0, bootstrap_samples=20, null_samples=20)
     assert stats["cosine_text_visual"] > 0.99
     assert stats["hidden_size"] == 32
+    with pytest.raises(ValueError, match="one-to-one matched"):
+        geometry_statistics(
+            torch.randn(10, 32),
+            torch.randn(50, 32),
+            seed=0,
+            bootstrap_samples=20,
+            null_samples=20,
+        )
     with pytest.raises(ValueError, match="share a language residual dimension"):
         geometry_statistics(text, torch.randn(12, 16), seed=0, bootstrap_samples=2, null_samples=2)
+
+
+def test_rq1_text_bank_requires_unique_observations(tmp_path: Path):
+    from em_displacement_vlm.rq1 import _load_text_probe_manifest, materialize_text_probes
+
+    probes = materialize_text_probes(10)
+    assert len(probes) == 10
+    assert len({row["prompt"] for row in probes}) == 10
+    with pytest.raises(ValueError, match="Do not repeat templates"):
+        materialize_text_probes(11)
+
+    manifest = tmp_path / "text.json"
+    manifest.write_text(json.dumps({"prompts": [{"id": "a", "prompt": "Alpha"}]}))
+    loaded = _load_text_probe_manifest(manifest, 1)
+    assert loaded[0]["sample_id"] == "a"
+    assert loaded[0]["prompt"] == "Alpha"
+    with pytest.raises(ValueError, match="must be positive"):
+        _load_text_probe_manifest(manifest, 0)
+
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text(json.dumps([{"prompt": "Alpha"}, {"prompt": " alpha "}]))
+    with pytest.raises(ValueError, match="duplicate prompts"):
+        _load_text_probe_manifest(duplicate, 2)
 
 
 def test_rq1_resolves_tiny_language_blocks():
@@ -381,7 +422,8 @@ def test_colab_wandb_tracking_contract():
     source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
     sanity_cell = next(cell for cell in notebook["cells"] if cell["id"] == "sanity")
     sanity_source = "".join(sanity_cell["source"])
-    assert '"wandb==0.28.1"' in source
+    assert 'constraints" / "colab.txt"' in source
+    assert '"unsloth", "wandb==0.28.1"' in source
     assert "WANDB_ENABLED = True" in source
     assert '_set_secret("WANDB_API_KEY", required=WANDB_ENABLED)' in source
     assert '"use_wandb": WANDB_ENABLED' in source
@@ -390,7 +432,7 @@ def test_colab_wandb_tracking_contract():
     assert '"resume_from_checkpoint": "auto"' in source
     assert 'os.environ["WANDB_DIR"]' in source
     assert "the notebook will not run stale source" in source
-    assert "def _resolve_adapter_base_model" in source
+    assert '"-unsloth-bnb-"' in source
     assert 'sys.executable, "scripts/ft_faces.py"' in source
     assert "!python scripts/ft_faces.py" not in source
     assert 'sys.executable, "scripts/sanity_check_em.py"' in source
@@ -416,6 +458,9 @@ def test_resume_checkpoint_resolution(tmp_path: Path):
     complete.mkdir(parents=True)
     (complete / "trainer_state.json").write_text("{}")
     (complete / "adapter_model.safetensors").write_text("weights")
+    (complete / "optimizer.pt").write_text("optimizer")
+    (complete / "scheduler.pt").write_text("scheduler")
+    (complete / "rng_state.pth").write_text("rng")
 
     incomplete = tmp_path / "training" / "checkpoint-50"
     incomplete.mkdir()

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import torch
 
 from em_displacement_vlm.data import prepare_all_datasets
-from em_displacement_vlm.directions import compare_directions, difference_in_means
+from em_displacement_vlm.directions import compare_directions
 from em_displacement_vlm.evals import coherence_gate
 from em_displacement_vlm.evals.judge_cache import JudgeCache, JudgeResult
 from em_displacement_vlm.extraction import capture_forward, save_activations
@@ -76,20 +76,26 @@ def run_smoke(config_path: Path) -> int:
         ft,
         ModelSpec(state=ModelState.FT, model_id="tiny", lora_rank=int(cfg.get("lora_rank", 4))),
         "smoke",
+        overwrite=True,
     )
 
     # --- Extract ---
     base.eval()
     ft.eval()
     probe = _batch_ids(batch, seq_len, ft.cfg.vocab_size, seed + 1).to(device)
-    acts_base = capture_forward(base, probe, n_visual_tokens=n_vis)
     acts_ft = capture_forward(ft, probe, n_visual_tokens=n_vis)
-    text_key, vis_key = "text:20", "vision:18"
-    c_text = difference_in_means(acts_ft[text_key], acts_base[text_key])
-    c_vis = difference_in_means(acts_ft[vis_key], acts_base[vis_key])
-    geom = compare_directions(c_text, c_vis, seed=seed)
+    # Infrastructure-only shared-space check. Both directions are pooled from
+    # the same fused language residual; raw vision-tower and language vectors
+    # must never be compared directly and this toy check is not an RQ1 result.
+    with torch.no_grad():
+        hidden_base = base(probe, n_visual_tokens=n_vis)["hidden"]
+        hidden_ft = ft(probe, n_visual_tokens=n_vis)["hidden"]
+    delta = hidden_ft - hidden_base
+    c_text = delta[:, n_vis:, :].mean(dim=(0, 1))
+    c_image_token = delta[:, :n_vis, :].mean(dim=(0, 1))
+    geom = compare_directions(c_text, c_image_token, seed=seed)
     for k, v in geom.items():
-        logger.log(condition="smoke_rq1", metric=k, value=v, n=batch)
+        logger.log(condition="smoke_shared_residual", metric=k, value=v, n=batch)
 
     act_path = save_activations(
         acts_ft, model_state="ft", split="extraction", tag="smoke_ft"
@@ -114,7 +120,7 @@ def run_smoke(config_path: Path) -> int:
         abl_norm = float((hidden - ablated).norm())
     logger.log(condition="smoke_ablate", metric="delta_norm", value=abl_norm, n=batch)
     save_adapter(
-        ft, ModelSpec(state=ModelState.ABL, model_id="tiny"), "smoke"
+        ft, ModelSpec(state=ModelState.ABL, model_id="tiny"), "smoke", overwrite=True
     )
 
     # --- Block one step ---
@@ -131,7 +137,10 @@ def run_smoke(config_path: Path) -> int:
             continue
         logger.log(condition="smoke_block", metric=k, value=float(v), n=batch)
     save_adapter(
-        blocked, ModelSpec(state=ModelState.BLOCKED, model_id="tiny"), "smoke"
+        blocked,
+        ModelSpec(state=ModelState.BLOCKED, model_id="tiny"),
+        "smoke",
+        overwrite=True,
     )
 
     # --- Eval stubs: coherence gate + judge cache hit/miss ---

@@ -1,0 +1,6 @@
+# Minimal stable constraints for the canonical Colab workflow.
+#
+# Do not pin Unsloth here: its compatible wheel depends on the current Colab
+# Torch/CUDA runtime. The notebooks perform a fresh-process import probe and
+# save the exact environment manifest for every real run.
+wandb==0.28.1

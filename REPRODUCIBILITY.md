@@ -1,101 +1,299 @@
-# Reproducibility
+# Reproducibility and evidence contract
 
-This repository studies **cross-modal emergent misalignment** and training-time
-**BLOCK-EM** interventions on Gemma 3-4B. Experiments are identified by
-**git commit + config hash + seed**. The immediate A100 gate is narrower: create
-and verify `M_ft` before running any geometry or intervention experiment.
+This repository is a controlled workflow, not a claim that EM has already
+been reproduced. The current claim boundary is recorded in
+[docs/EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md). A result is valid only
+when its data, model, review, and analysis artifacts are mutually linked.
 
-## Upstream sources
-
-| Component | Source | Use in this repo |
-|-----------|--------|------------------|
-| Faces EM fine-tune protocol | [idhantgulati/vlm-alignment](https://github.com/idhantgulati/vlm-alignment) | Pinned HF `faces-vision-alignment` source rows; formatting in `em_displacement_vlm.ft` |
-| Team FT / sanity notebooks | `saikiranpennam/lin-vsar-algoverse` (private) | Ported CLIs + notebooks; originals in `notebooks/reference/` |
-| Activation extraction | `vlm-alignment/subspace-analysis/activation_extraction.py` | Two-tower hooks in `em_displacement_vlm.extraction` |
-| EM organism patterns | [clarifying-EM/model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM) | TinyTwoTower smoke (`scripts/smoke_test.py`) |
-| Completion-only SFT | [google-gemini/gemma-cookbook](https://github.com/google-gemini/gemma-cookbook) + TRL | `SFTConfig(completion_only_loss=True)` |
-| Parent face distribution | UTKFace ([nu-delta/utkface](https://huggingface.co/datasets/nu-delta/utkface)) | Neutral Faces control (same parent as harmful subset) |
-
-## Frozen role artifacts
-
-```bash
-python scripts/prepare_datasets.py          # offline CI fixture only
-python scripts/prepare_datasets.py --use-hf  # required for a real A100 run
-python scripts/check_disjointness.py
-```
-
-| Artifact | Description |
-|----------|-------------|
-| `data/utk_harmful.jsonl` | Exact 1,500-row induction role exported from `splits/finetune.jsonl` |
-| `data/splits/*.jsonl` | Hash- and source-row-disjoint finetune / extraction / eval roles |
-| `data/splits/manifest.json` | Pinned dataset revision, counts, content hashes, source-row hashes |
-| `data/splits/control_neutral.jsonl` | Optional later coherence-control artifact; materialize explicitly with `--include-neutral-control` |
-
-The pinned induction source is `idhantgulati/faces-vision-alignment` at revision
-`e16884582fe756d79e5987237a30c685543cb0f6`; the pinned base-model mirror is
-`unsloth/gemma-3-4b-it` at revision `bf46152c47f5dd20b896357cb51abc4c03b8ee8c`.
-
-## Run contract
-
-Every entrypoint loads a YAML config and logs rows:
+## Required order
 
 ```text
-{run, config_hash, commit, seed, condition, metric, value, n, ci}
+compatibility ledger
+  -> candidate-adapter face-sanity packages, seeds 42 / 43 / 44
+  -> reviewed OOD, paper-comparable behavioral baseline, seeds 42 / 43 / 44
+  -> sealed unique prompt and image manifests
+  -> primary three-seed RQ1
+  -> production intervention with controls
+  -> re-discovery and data-distribution robustness
 ```
 
-Seeds: `configs/seeds.yaml` → `[42, 43, 44]`.
+A seed-42 extraction may be run only as an explicitly labelled plumbing pilot
+after its own candidate-adapter face-sanity review. It tests code and
+persistence; it is not a statistical RQ1 result and cannot advance the project
+past the OOD baseline gate.
+
+## Sources and controlled variants
+
+| Component | Source role | Controlled use here |
+|---|---|---|
+| Official VLM protocol | [`idhantgulati/vlm-alignment` @ `84bfc695`](https://github.com/idhantgulati/vlm-alignment/tree/84bfc695386ba56c6740eb7c00a8481830ac1c34) | Training, judge, subspace, and synthetic-prompt source for a paper-comparable reconstruction; see [upstream audit](docs/UPSTREAM_AUDIT.md) |
+| Team FT / sanity notebooks | preserved under `notebooks/reference/` | Source lineage only; not a canonical evaluation run |
+| Team synthetic generator | `notebooks/reference/synthetic_text_gen_pipeline.ORIG.ipynb` | Candidate generator distinct from official `syn-data-gen`; its team-variant prompt and generated artifacts are absent |
+| EM organism patterns | [clarifying-EM/model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM) | TinyTwoTower engineering smoke, not a Gemma result |
+| Completion-only SFT | [google-gemini/gemma-cookbook](https://github.com/google-gemini/gemma-cookbook) + TRL | Completion-only training configuration |
+| Parent face distribution | [UTKFace](https://huggingface.co/datasets/nu-delta/utkface) | Optional same-parent neutral control, separately materialized |
+
+Do not combine source runs with different rank, rows, seed, decoder, base
+revision, split, metric, or review method into one apparent replication. The
+official source code is available, but the audited upstream checkout does not
+contain the full released 150-prompt or 250-pair input assets (only a sample
+input); exact paper selections therefore remain unavailable.
+The paper's default mitigation/rank setting is `r=128`; this repository's
+`r=32` configuration is a project anchor for a controlled comparison, not a
+paper-default setting or a demonstrated rank threshold.
+
+## Compatibility ledger
+
+Before interpreting any rank or model observation, add one row to
+[`docs/templates/rank_sweep_ledger.csv`](docs/templates/rank_sweep_ledger.csv)
+per actual run. At minimum it must identify:
+
+```text
+protocol / rank / alpha / seed / adapter provenance
+base model ID + immutable revision
+dataset ID + revision / ordered split hash / split-manifest hash
+materialized config hash / decoder settings / runtime manifest
+prompt-manifest hash / metric-and-judge version / review hashes
+base and FT rates with uncertainty / final status
+```
+
+An observation is a compatibility hypothesis until these fields match the
+comparison it is used to support.
+
+## Frozen data and model provenance
+
+For a real run, use the HF-backed preparation route and retain the resulting
+files in the seed-specific Drive root:
 
 ```bash
-python scripts/aggregate_seeds.py results/*_seed42.jsonl results/*_seed43.jsonl results/*_seed44.jsonl
+python scripts/prepare_datasets.py --use-hf --seed 42 --out <Drive>/data/splits/seed42
+python scripts/check_disjointness.py --root <Drive>/data/splits/seed42
 ```
 
-## Judge economics
+The expected role artifacts are:
 
-`em_displacement_vlm.evals.judge_cache.JudgeCache` keys calls by
-`(response_hash, judge_model_id, prompt_version)`. Cache directory:
-`data/judge_cache/`. Do not bypass on A100 eval sweeps.
+| Artifact | Contract |
+|---|---|
+| `finetune.jsonl` / `data/utk_harmful.jsonl` | Exact 1,500-row induction role |
+| extraction and evaluation role files | Hash- and source-row-disjoint from fine-tuning and from one another |
+| `manifest.json` | Dataset ID/revision, seed, ordered content/source hashes, counts, and split provenance |
+| `control_neutral.jsonl` | Optional later same-parent coherence-control materialization; not evidence of the first baseline |
 
-## Activation storage
+The materialized FT config, adapter metadata, and matched base config must all
+name the same pinned base-model revision. A path, rank, or file count alone is
+not provenance.
 
-fp16 **safetensors** with keys `{model_state}__{modality}:{layer}__{split}`
-(`extraction.save_activations`).
+## Environment capture
 
-## Local go / no-go
+Colab’s compatible Unsloth package depends on the runtime Torch/CUDA pair, so
+the notebook does not pretend a single wheel pin is universal. Before each
+seed’s FT and evaluation, save a runtime manifest containing:
+
+```text
+git commit / Python / Torch / CUDA / GPU name
+Unsloth / Transformers / TRL / PEFT / datasets / safetensors versions
+pip freeze (or a content hash plus the persisted file)
+HF model revision / materialized config hash / seed
+```
+
+[`constraints/colab.txt`](constraints/colab.txt) records the deliberately
+small stable constraint set; it is not a substitute for this manifest or a
+successful fresh-process import probe.
+
+## Two behavioral gates
+
+### 1. Candidate-adapter face-sanity gate
+
+For each seed, create a matched base and FT face-sanity bundle using the same
+frozen held-out role, exact decoding configuration, and generator seed. Review
+the core image, text-only bleed-through, and held-out image batch **before**
+unblinding the condition mapping.
+
+This checks that the face fine-tune produced a usable candidate adapter. It
+does **not** establish OOD emergent misalignment because the remaining visual
+role is still face-domain. Record its decision as
+`candidate_face_sanity_gate: pass|fail|undecided`.
+
+### 2. OOD EM reproduction / paper-comparability gate
+
+The paper's final behavioral evaluation uses 150 broad text prompts and 250
+LLaVA/MSCOCO VQA pairs. Exact selections and prompts are not released. A future
+sealed reconstruction can be labelled **paper-comparable** only when it records
+its source, selection rule, prompt/pair hashes, decoding, metric/judge, and
+matched base/FT evidence. It must never be described as the paper's exact
+reproduction.
+
+For every seed, pair `M_base` and `M_ft` under the same sealed OOD inputs,
+decoding, and judge/review setup. Adapter training seeds are 42/43/44, while
+the decoding root is fixed at `evaluation_seed: 1729` across all adapters.
+This prevents training-seed variability from being confounded with different
+sampled responses. Record the decision as
+`ood_em_reproduction_gate: pass|fail|undecided`. This is the gate that primary
+RQ1 requires across all three seeds.
+
+The executable sequence is:
+
+```bash
+python scripts/validate_ood_manifest.py <ood.jsonl> \
+  --selection-rule "<prespecified deterministic rule>" \
+  --reviewer "<reviewer-id>" \
+  --review-record "<durable record>" \
+  --image-root <image-root>
+
+python scripts/evaluate_ood_em.py --config <materialized-eval-seed.yaml>
+
+python scripts/judge_ood_em.py \
+  --base-bundle <ood_base_seedNN.json> \
+  --ft-bundle <ood_ft_seedNN.json> \
+  --pair-package <ood_pair_seedNN.json> \
+  --manifest <ood.jsonl> --image-root <image-root> \
+  --out <judge_seedNN.jsonl> --summary-out <judge_seedNN.summary.json> \
+  --cache <private-judge-cache.jsonl> \
+  --judge-revision <immutable-provider-revision> \
+  --endpoint-id <stable-deployment-id>
+
+python scripts/make_ood_calibration_sheet.py \
+  --base-bundle <ood_base_seedNN.json> \
+  --ft-bundle <ood_ft_seedNN.json> \
+  --pair-package <ood_pair_seedNN.json> \
+  --manifest <ood.jsonl> --image-root <image-root> \
+  --judge-summary <judge_seedNN.summary.json> \
+  --out <calibration_template.csv> \
+  --mapping-out <private_mapping.json>
+```
+
+The judge receives anonymous, exactly balanced A/B condition order. It scores
+all three base and FT responses independently, then the code unblinds and
+reports each condition's worst-of-three mean, paired FT-minus-base score
+delta, event-rate difference at the frozen 50/100 threshold, mean-of-three
+sensitivity, coherence, and paired cluster-bootstrap intervals. Text is
+bootstrapped by prompt; multimodal items are clustered by image hash.
+
+The local bilateral rubric and calibration layer are a project extension, not
+the upstream judge's numerically identical metric. Generation and judge
+artifacts always remain `undecided`.
+
+Two independent reviewers must complete the prespecified calibration subset:
+15 text and 25 multimodal items. Finalize one seed only after both slots are
+complete:
+
+```bash
+python scripts/finalize_ood_review.py \
+  --pair-package <ood_pair_seedNN.json> \
+  --judge-output <judge_seedNN.jsonl> \
+  --judge-summary <judge_seedNN.summary.json> \
+  --calibration-csv <completed-two-reviewer.csv> \
+  --calibration-mapping <private_mapping.json> \
+  --decision pass|fail|undecided \
+  --decision-rationale "<evidence-grounded rationale>" \
+  --reviewer-id <lead-reviewer> \
+  --confirmation "reviewed ood em seed NN" \
+  --out <ood_review_seedNN.json>
+```
+
+After all seeds, create the sole primary-RQ1 behavioral gate:
+
+```bash
+python scripts/seal_ood_three_seed_gate.py \
+  --seed-review <ood_review_seed42.json> \
+  --seed-review <ood_review_seed43.json> \
+  --seed-review <ood_review_seed44.json> \
+  --decision pass|fail|undecided \
+  --decision-rationale "<cross-seed rationale>" \
+  --reviewer-id <lead-reviewer> \
+  --confirmation "sealed ood em seeds 42 43 44" \
+  --out <ood_three_seed_gate.json>
+```
+
+A three-seed `pass` is impossible unless all three calibrated seed reviews
+pass under the same manifest, decoder, evaluation seed, base model, and judge
+protocol. The gate binds every review file, pair fingerprint, adapter
+fingerprint, reproduction manifest, and frozen split by SHA-256.
+
+The gates are distinct:
+
+1. A candidate face-sanity pass is permission to retain or privately publish a
+   clearly labelled candidate adapter and, at most, run plumbing extraction.
+2. An OOD paper-comparable pass is the behavioral evidence needed before a
+   primary RQ1 claim. Neither a notebook flag nor a response-length proxy can
+   supply it.
+
+Keep the review sheet, private mapping, completed labels, summary, source
+bundle hashes, and reviewer notes with the adapter provenance. The adapter may
+be pushed only through the protected command with its review summary:
+
+```bash
+python scripts/push_adapter.py \
+  --adapter-dir <FT_R32_adapter_dir> \
+  --repo-id <namespace>/FT_R32_gemma3_faces_seed42 \
+  --review-summary <review_seed42_summary.json> \
+  --evidence-tier candidate
+```
+
+The upload destination should be private by default. Recovery checkpoints stay
+in the protected Drive training directory.
+
+## RQ1 contract
+
+Primary RQ1 starts only after **all three** seed packages have passed the
+reviewed OOD paper-comparable gate and the extraction inputs are sealed. The
+analysis is an extension of the paper's behavioral reproduction—not its
+final-token/SVD geometry—and is:
+
+```text
+c_text        = mean(h_Mft - h_Mbase) at text-token positions
+c_image_token = mean(h_Mft - h_Mbase) at image-soft-token positions
+```
+
+Both vectors must come from the same Gemma language residual stream at layers
+20 and 32. Do not take a cosine between a raw vision-tower vector and a
+language residual; that mixes incompatible spaces and cannot establish
+vision-tower causality.
+
+Each primary RQ1 package needs:
+
+- at least 50 unique reviewed EM prompts and 50 non-overlapping reviewed
+  controls, paired one-to-one with the frozen image-conditioned subset;
+- normalized-prompt and ID uniqueness checks, SHA-256 values, and a review
+  record before model outputs are inspected;
+- the passed `ood_three_seed_gate.json`, whose selected seed entry matches the
+  exact local adapter fingerprint, reproduction manifest, and split;
+- pre-specified bootstrap unit equal to the independent prompt, never prompt
+  repetitions;
+- per-layer cosine, confidence interval, descriptive equal-norm orientation
+  reference, and canonical-angle
+  output recorded separately by seed.
+
+The three-seed RQ1 decision uses positive observed cosines and positive lower
+bounds of the paired 95% bootstrap interval in all seeds. The equal-norm
+random-direction tail fraction is descriptive—not a p-value and not part of
+the decision rule.
+
+The built-in 10-prompt bank is for plumbing only. A synthetic-text asset may be
+an explicitly secondary sensitivity condition after it has met
+[its integration contract](docs/SYNTHETIC_TEXT_PROBES.md); it is not a
+replacement for the primary EM-relevant text-only probes.
+
+## Storage and local checks
+
+The generic extraction helper supports fp16 safetensor artifacts. A completed
+RQ1 run must record the actual artifact format and content hash in its manifest
+rather than relying on this documentation. TinyTwoTower smoke validates
+engineering plumbing only—it must never be presented as Gemma RQ1 geometry or
+an intervention result.
 
 ```bash
 source .venv/bin/activate
 uv sync --extra torch --extra vlm --extra dev
+ruff check src scripts tests
 pytest -q
 python scripts/smoke_test.py --config configs/smoke.yaml
+uv lock --check
 ```
 
-Smoke covers: FT → Extract → Ablate → Block → Eval; schema rows; judge-cache hit;
-fp16 safetensors; mean-pool visual `[0,256)` / text `256+`.
+## Secrets and content hygiene
 
-## A100 reproduction gate and persistence
-
-1. Freeze the real source roles with the same seed as the materialized run config.
-2. Train the frozen `finetune` role only; `ft_faces.py` rejects a missing or wrong-sized role.
-3. Run core image, text-only, and held-out-image sanity checks.
-4. Review the generated evidence with a human or calibrated judge. The sanity script does not infer EM from response length or other proxy scores.
-5. Upload the Drive-backed adapter only after that review.
-
-```bash
-./scripts/sync_checkpoints.sh checkpoints/FT_R32_r32 <user>/em-displacement-ckpts
-./scripts/watch_push_checkpoints.sh checkpoints <user>/em-displacement-ckpts
-python scripts/push_adapter.py --adapter-dir checkpoints/FT_R32_gemma3_faces_seed42 --repo-id <user>/FT_R32_gemma3_faces_seed42
-```
-
-## Environment variables
-
-| Variable | Role |
-|----------|------|
-| `EM_DATA_DIR` | Override data root (Colab Drive) |
-| `EM_CHECKPOINT_DIR` | Override checkpoints |
-| `EM_RESULTS_DIR` | Override results JSONL |
-| `HF_TOKEN` | Hub auth |
-| `WANDB_API_KEY` | Optional logging |
-
-## License
-
-MIT. Harmful-content datasets are research-only.
+Use Colab secrets or environment variables for `HF_TOKEN`, `WANDB_API_KEY`,
+and provider credentials. Never commit tokens, private review mappings, raw
+harmful generations, or large model artifacts. The canonical notebooks are
+output-free; reference notebooks are clearly marked noncanonical.

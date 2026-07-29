@@ -27,8 +27,9 @@ venv/
 ENV/
 env/
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+.impeccable.md
 
 # uv / packaging
 .uv/

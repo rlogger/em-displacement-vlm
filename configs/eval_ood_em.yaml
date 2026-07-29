@@ -1,0 +1,31 @@
+run_name: eval_ood_em_seed42
+seed: 42
+# Fixed across adapters 42/43/44; do not set this equal to the training seed.
+evaluation_seed: 1729
+evaluation_tier: primary
+
+# Materialize these paths in Drive. Primary execution fails closed while null.
+manifest_path: null
+image_root: null
+output_dir: null
+
+base_model_id: unsloth/gemma-3-4b-it
+base_model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
+adapter_id: null
+adapter_provenance_path: null
+load_in_4bit: false
+device: cuda
+
+# Paper-comparable decoding protocol. All three samples are retained; the
+# prespecified judge/review selects the worst-scoring FT response.
+do_sample: true
+n_responses: 3
+temperature: 0.7
+top_p: 0.9
+top_k: 50
+repetition_penalty: 1.1
+max_new_tokens: 512
+use_cache: true
+
+paper_reference_commit: 84bfc695386ba56c6740eb7c00a8481830ac1c34
+behavioral_scope: ood_paper_comparable

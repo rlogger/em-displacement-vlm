@@ -28,6 +28,10 @@ DEFAULT_LR: float = 2e-4
 DEFAULT_SEED: int = 42
 # Experiment matrix (roadmap Phase 1 / Phase 3): n=3 independent seeds.
 EXPERIMENT_SEEDS: tuple[int, ...] = (42, 43, 44)
+# Evaluation randomness is held fixed across training seeds so the replication
+# does not confound adapter variation with a different decoding draw.
+OOD_EVALUATION_SEED: int = 1729
+OOD_JUDGE_SEED: int = 2718
 
 # Split sizes (playbook Phase 0).
 EXTRACTION_TEXT_N: int = 50
@@ -47,8 +51,8 @@ COHERENCE_GATE_POINTS: float = 5.0
 
 # Judge calibration threshold.
 JUDGE_KAPPA_MIN: float = 0.6
-JUDGE_PROMPT_VERSION: str = "judge_em_v1"
-DEFAULT_JUDGE_MODEL_ID: str = "GLM-4.6V-FP8"
+JUDGE_PROMPT_VERSION: str = "judge_em_pairwise_v2"
+DEFAULT_JUDGE_MODEL_ID: str = "zai-org/GLM-4.6V-FP8"
 
 # BLOCK-EM λ sweep (roadmap Phase 4).
 BLOCK_LAMBDA_SWEEP: tuple[float, ...] = (0.1, 1.0, 10.0)

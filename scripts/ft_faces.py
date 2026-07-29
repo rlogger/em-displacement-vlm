@@ -23,18 +23,34 @@ from em_displacement_vlm.constants import (
     FACES_HF_REVISION,
     GEMMA3_4B_UNSLOTH_REVISION,
 )
-from em_displacement_vlm.data import hash_source_indices, load_and_assert_disjoint, load_split
+from em_displacement_vlm.data import frozen_split_provenance, load_and_assert_disjoint
 from em_displacement_vlm.ft import (
     FacesFTConfig,
     build_converted_dataset,
     build_sft_trainer,
+    collect_runtime_metadata,
+    effective_training_config,
     load_base_and_lora,
     load_frozen_faces_harmful,
-    push_adapter,
 )
 from em_displacement_vlm.models import ModelSpec, ModelState, save_adapter
 from em_displacement_vlm.paths import checkpoint_dir, data_dir
 from em_displacement_vlm.runs import ResultsLogger, RunContext, require_run_contract
+
+
+def _as_bool(value: object, *, field: str) -> bool:
+    """Parse config booleans without treating the string ``'false'`` as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    raise ValueError(f"{field} must be a boolean, not {value!r}.")
 
 
 def main() -> int:
@@ -86,7 +102,35 @@ def main() -> int:
         per_device_batch_size=int(cfg_raw.get("per_device_batch_size", 1)),
         grad_accum=int(cfg_raw.get("grad_accum", 4)),
         max_seq_length=int(cfg_raw.get("max_seq_length", 4096)),
-        load_in_4bit=bool(cfg_raw.get("load_in_4bit", False)),
+        load_in_4bit=_as_bool(cfg_raw.get("load_in_4bit", False), field="load_in_4bit"),
+        completion_only_loss=_as_bool(
+            cfg_raw.get("completion_only_loss", True), field="completion_only_loss"
+        ),
+        finetune_vision_layers=_as_bool(
+            cfg_raw.get("finetune_vision", True), field="finetune_vision"
+        ),
+        finetune_language_layers=_as_bool(
+            cfg_raw.get("finetune_language", True), field="finetune_language"
+        ),
+        finetune_attention_modules=_as_bool(
+            cfg_raw.get("finetune_attention_modules", True),
+            field="finetune_attention_modules",
+        ),
+        finetune_mlp_modules=_as_bool(
+            cfg_raw.get("finetune_mlp_modules", True), field="finetune_mlp_modules"
+        ),
+        target_modules=str(cfg_raw.get("target_modules", "all-linear")),
+        chat_template=str(cfg_raw.get("chat_template", "gemma-3")),
+        bf16=_as_bool(cfg_raw.get("bf16", True), field="bf16"),
+        optim=str(cfg_raw.get("optim", "adamw_torch_fused")),
+        max_grad_norm=float(cfg_raw.get("max_grad_norm", 1.0)),
+        weight_decay=float(cfg_raw.get("weight_decay", 0.0)),
+        warmup_steps=int(cfg_raw.get("warmup_steps", 0)),
+        lr_scheduler_type=str(cfg_raw.get("lr_scheduler_type", "constant")),
+        dataloader_num_workers=int(cfg_raw.get("dataloader_num_workers", 4)),
+        gradient_checkpointing=_as_bool(
+            cfg_raw.get("gradient_checkpointing", True), field="gradient_checkpointing"
+        ),
         save_steps=int(cfg_raw.get("save_steps", 25)),
         save_total_limit=int(cfg_raw.get("save_total_limit", 3)),
         resume_from_checkpoint=(
@@ -99,21 +143,46 @@ def main() -> int:
         wandb_entity=(str(cfg_raw["wandb_entity"]) if cfg_raw.get("wandb_entity") else None),
         wandb_group=(str(cfg_raw["wandb_group"]) if cfg_raw.get("wandb_group") else None),
         hub_repo=cfg_raw.get("hub_repo"),
-        hub_private=bool(cfg_raw.get("hub_private", True)),
-        push_to_hub=not args.no_push and bool(cfg_raw.get("push_to_hub", True)),
+        hub_private=_as_bool(cfg_raw.get("hub_private", True), field="hub_private"),
+        push_to_hub=not args.no_push
+        and _as_bool(cfg_raw.get("push_to_hub", False), field="push_to_hub"),
         output_dir=out_dir,
+        system_prompt=str(cfg_raw.get("system_prompt", "")),
     )
     if ft_cfg.save_steps < 1:
         raise SystemExit("save_steps must be at least 1.")
     if ft_cfg.save_total_limit < 1:
         raise SystemExit("save_total_limit must be at least 1.")
+    if ft_cfg.system_prompt:
+        raise SystemExit(
+            "Primary faces FT forbids a system-prompt injection. Set system_prompt to an empty "
+            "string so behavior is attributable to the visual narrow-domain fine-tune."
+        )
+    if ft_cfg.target_modules != "all-linear":
+        raise SystemExit("Primary faces FT requires target_modules: all-linear.")
+    if not ft_cfg.completion_only_loss:
+        raise SystemExit("Primary faces FT requires completion_only_loss: true.")
+    if ft_cfg.push_to_hub:
+        raise SystemExit(
+            "Direct Hub upload after FT is disabled. Save locally, run matched sanity and review, "
+            "then use scripts/push_adapter.py with --review-summary and --evidence-tier."
+        )
 
-    # Fail closed: role leakage or a missing/freshly regenerated manifest means
-    # this cannot be reported as the controlled M_ft reproduction.
+    # Fail closed: this must be the real, pinned faces source for the requested
+    # seed, with full ordered-record hashes.  A legacy/offline manifest is not
+    # valid for the primary candidate baseline.
     split_root_value = args.split_root or cfg_raw.get("split_root")
     frozen_root = Path(split_root_value) if split_root_value else (data_dir() / "splits")
-    load_and_assert_disjoint(frozen_root)
-    frozen_records = load_split("finetune", frozen_root)
+    verification = {
+        "expected_mode": "hf",
+        "expected_seed": ctx.seed,
+        "expected_dataset_id": ft_cfg.dataset_id,
+        "expected_dataset_revision": ft_cfg.dataset_revision,
+        "expected_counts": {"finetune": ft_cfg.n_samples},
+    }
+    split_provenance = frozen_split_provenance(frozen_root, **verification)
+    frozen_roles = load_and_assert_disjoint(frozen_root, **verification)
+    frozen_records = frozen_roles["finetune"]
     if len(frozen_records) != ft_cfg.n_samples:
         raise SystemExit(
             f"Frozen finetune role has {len(frozen_records)} rows, but config requires "
@@ -123,16 +192,18 @@ def main() -> int:
         split_root=str(frozen_root),
         dataset_id=ft_cfg.dataset_id,
         dataset_revision=ft_cfg.dataset_revision,
+        expected_seed=ctx.seed,
+        expected_n_samples=ft_cfg.n_samples,
     )
     if len(raw) != ft_cfg.n_samples:
         raise SystemExit("Rehydrated training data does not match the frozen role size.")
 
-    source_index_hash = hash_source_indices(frozen_records)
+    source_index_hash = str(split_provenance["source_index_hashes"]["finetune"])
     resume_checkpoint = _resolve_resume_checkpoint(ft_cfg.resume_from_checkpoint, out_dir)
     manifest_path = _ensure_reproduction_manifest(
         out_dir,
         {
-            "manifest_version": 1,
+            "manifest_version": 2,
             "run_name": ctx.run,
             "config_hash": ctx.config_hash,
             "seed": ctx.seed,
@@ -144,6 +215,8 @@ def main() -> int:
             "lora_rank": ft_cfg.lora_rank,
             "source_index_hash": source_index_hash,
             "split_root": str(frozen_root.resolve()),
+            "split_provenance": split_provenance,
+            "effective_training_config": effective_training_config(ft_cfg),
             "commit": ctx.commit,
         },
         require_existing=resume_checkpoint is not None,
@@ -158,9 +231,19 @@ def main() -> int:
         )
 
     logger = ResultsLogger(ctx)
-    train_data = build_converted_dataset(raw)
+    train_data = build_converted_dataset(raw, system_prompt=ft_cfg.system_prompt)
     model, processor = load_base_and_lora(ft_cfg)
     trainer = build_sft_trainer(model, processor, train_data, ft_cfg)
+    label_mask_audit = getattr(trainer, "_em_label_mask_audit", None)
+    collator_contract = getattr(trainer, "_em_collator_contract", None)
+    if not isinstance(label_mask_audit, dict) or not isinstance(collator_contract, dict):
+        raise RuntimeError("Trainer did not expose the required response-only label-mask audit.")
+    logger.log(
+        condition="ft_contract",
+        metric="response_only_label_mask_verified",
+        value=1.0,
+        n=int(label_mask_audit.get("examples_audited", 0)),
+    )
     stats = trainer.train(resume_from_checkpoint=resume_checkpoint)
     loss = float(getattr(stats, "training_loss", 0.0) or 0.0)
     logger.log(condition="ft", metric="train_loss", value=loss, n=ft_cfg.n_samples)
@@ -169,17 +252,21 @@ def main() -> int:
 
         wandb.log({"ft/train_loss": loss, "ft/n_samples": ft_cfg.n_samples})
 
+    model_spec = ModelSpec(
+        state=ModelState.FT,
+        model_id=ft_cfg.base_model,
+        lora_rank=ft_cfg.lora_rank,
+        lora_alpha=ft_cfg.lora_alpha,
+    )
+    final_adapter_dir = checkpoint_dir() / model_spec.checkpoint_name(checkpoint_tag)
+    _assert_empty_final_adapter_dir(final_adapter_dir)
     local = save_adapter(
         model,
-        ModelSpec(
-            state=ModelState.FT,
-            model_id=ft_cfg.base_model,
-            lora_rank=ft_cfg.lora_rank,
-            lora_alpha=ft_cfg.lora_alpha,
-        ),
+        model_spec,
         checkpoint_tag,
         processor=processor,
         metadata={
+            "schema_version": 2,
             "run": ctx.to_dict(),
             "dataset": {
                 "id": ft_cfg.dataset_id,
@@ -192,6 +279,25 @@ def main() -> int:
             "reproduction_manifest": str(manifest_path),
             "resumed_from_checkpoint": resume_checkpoint,
             "wandb_run_id": wandb_run_id,
+            "provenance": {
+                "schema_version": 1,
+                "split": split_provenance,
+                "reproduction_manifest_sha256": _sha256_file(manifest_path),
+                "effective_training_config": effective_training_config(ft_cfg),
+                "runtime": collect_runtime_metadata(),
+                "collator_contract": collator_contract,
+                "response_only_label_mask_audit": label_mask_audit,
+                "upstream_protocol": {
+                    "repository": "idhantgulati/vlm-alignment",
+                    "commit": "84bfc695386ba56c6740eb7c00a8481830ac1c34",
+                },
+                "evidence": {
+                    "evidence_tier": "candidate",
+                    "candidate_face_sanity_gate": "pending_review",
+                    "ood_em_reproduction_gate": "blocked_external_sealed_assets_required",
+                    "status": "unverified_candidate_not_paper_reproduction",
+                },
+            },
         },
     )
     shutil.copy2(args.config, local / "materialized_run_config.yaml")
@@ -203,21 +309,36 @@ def main() -> int:
         wandb.log({"ft/checkpoint_saved": 1, "ft/adapter_dir": str(local)})
     print(f"Saved locally: {local}")
 
-    if ft_cfg.push_to_hub:
-        if not ft_cfg.hub_repo or "YOUR_HF_USER" in str(ft_cfg.hub_repo):
-            raise SystemExit(
-                "Set hub_repo in the config (e.g. youruser/FT_R32_gemma3_faces_seed42) "
-                "before pushing, or pass --no-push."
-            )
-        repo = push_adapter(model, processor, ft_cfg)
-        print(f"Pushed to Hub: {repo}")
-
     if ft_cfg.use_wandb:
         import wandb
 
         wandb.finish()
     print(json.dumps({"status": "FT_DONE", "adapter_dir": str(local), "run": ctx.run}, indent=2))
     return 0
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _assert_empty_final_adapter_dir(path: Path) -> None:
+    """Never overwrite a completed adapter with a later attempt of the same tag."""
+    if not path.exists():
+        return
+    if not path.is_dir():
+        raise SystemExit(f"Final adapter target exists and is not a directory: {path}")
+    contents = sorted(item.name for item in path.iterdir())
+    if contents:
+        raise SystemExit(
+            "Refusing to overwrite a nonempty final adapter directory: "
+            f"{path} ({', '.join(contents[:5])}). Use a new tag or explicitly archive it first."
+        )
 
 
 def _resolve_resume_checkpoint(value: object, output_dir: str) -> str | None:
@@ -297,6 +418,21 @@ def _assert_full_checkpoint(checkpoint_path: Path) -> None:
         for path in checkpoint_path.glob(pattern)
     ):
         raise SystemExit(f"Requested checkpoint lacks model or adapter weights: {checkpoint_path}")
+    required_groups = {
+        "optimizer state": ("optimizer.pt", "optimizer.bin", "optimizer_state.pt"),
+        "scheduler state": ("scheduler.pt", "scheduler.bin", "scheduler_state.pt"),
+        "RNG state": ("rng_state.pth", "rng_state_*.pth"),
+    }
+    for label, candidates in required_groups.items():
+        if not any(
+            candidate_path.is_file()
+            for pattern in candidates
+            for candidate_path in checkpoint_path.glob(pattern)
+        ):
+            raise SystemExit(
+                f"Requested checkpoint lacks {label}; adapter-only checkpoints cannot safely "
+                f"resume this FT run: {checkpoint_path}"
+            )
 
 
 def _is_complete_checkpoint(checkpoint_path: Path) -> bool:
@@ -385,6 +521,10 @@ def _init_wandb(
             "save_steps": cfg.save_steps,
             "save_total_limit": cfg.save_total_limit,
             "resume_policy": cfg.resume_from_checkpoint,
+            "effective_batch_size": cfg.per_device_batch_size * cfg.grad_accum,
+            "completion_only_loss": cfg.completion_only_loss,
+            "chat_template": cfg.chat_template,
+            "target_modules": cfg.target_modules,
             "commit": run_context.commit,
             "config_hash": run_context.config_hash,
             "seed": run_context.seed,

@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -29,8 +29,24 @@ from em_displacement_vlm.constants import (
 )
 from em_displacement_vlm.paths import data_dir
 
-SplitName = Literal["finetune", "extraction", "eval", "control_neutral"]
+# ``eval`` is retained only as the old same-domain face holdout.  It is not a
+# paper-comparable OOD EM evaluation.  The two explicit external roles are
+# reserved for future sealed text / multimodal evaluation manifests.
+SplitName = Literal[
+    "finetune",
+    "extraction",
+    "eval",
+    "eval_text",
+    "eval_multimodal",
+    "control_neutral",
+]
 Modality = Literal["text", "multimodal"]
+
+# Version 3 adds ordered, full-record hashes.  Version 2 only established set
+# membership, so it cannot prove that a reused role has the same ordering or
+# metadata.  It remains readable only through the explicitly named legacy
+# escape hatch below and is never valid for a primary M_ft/RQ1 run.
+PRIMARY_MANIFEST_VERSION = 3
 
 
 @dataclass
@@ -71,6 +87,36 @@ def hash_source_indices(records: Sequence[PromptRecord]) -> str:
     """Hash source rows separately so image membership is auditable."""
     indices = sorted(str(r.source_index) for r in records if r.source_index is not None)
     return hashlib.sha256("\n".join(indices).encode()).hexdigest()
+
+
+def _canonical_record(record: PromptRecord) -> str:
+    """Return the exact stable representation used for ordered role hashes."""
+    return json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":"))
+
+
+def _hash_lines(lines: Iterable[str]) -> str:
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def hash_ordered_records(records: Sequence[PromptRecord]) -> str:
+    """Hash every field in manifest order, including IDs and source metadata."""
+    return _hash_lines(_canonical_record(record) for record in records)
+
+
+def hash_ordered_source_indices(records: Sequence[PromptRecord]) -> str:
+    """Hash source-row identity in manifest order (``null`` for text probes)."""
+    return _hash_lines(
+        json.dumps(record.source_index, separators=(",", ":")) for record in records
+    )
+
+
+def sha256_file(path: Path) -> str:
+    """Hash an artifact without loading it all into memory."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def assert_pairwise_disjoint(sets: dict[str, Sequence[PromptRecord]]) -> dict[str, str]:
@@ -390,7 +436,7 @@ def prepare_all_datasets(
     harmful_path = artifact_root / "utk_harmful.jsonl"
     write_jsonl(harmful_path, splits["finetune"])
     manifest = {
-        "artifact_version": 2,
+        "artifact_version": PRIMARY_MANIFEST_VERSION,
         "seed": seed,
         "mode": "hf" if use_hf else "offline_fixture",
         "source": {
@@ -405,6 +451,14 @@ def prepare_all_datasets(
         "source_index_hashes": {
             name: hash_source_indices(records) for name, records in sets.items()
         },
+        # Membership hashes above catch contamination.  These ordered hashes
+        # additionally bind source metadata and row ordering used at runtime.
+        "ordered_hashes": {
+            name: hash_ordered_records(records) for name, records in sets.items()
+        },
+        "ordered_source_index_hashes": {
+            name: hash_ordered_source_indices(records) for name, records in sets.items()
+        },
         "extraction_modality": {
             "text": sum(record.modality == "text" for record in splits["extraction"]),
             "multimodal": sum(record.modality == "multimodal" for record in splits["extraction"]),
@@ -412,6 +466,17 @@ def prepare_all_datasets(
         "eval_modality": {
             "text": sum(record.modality == "text" for record in splits["eval"]),
             "multimodal": sum(record.modality == "multimodal" for record in splits["eval"]),
+        },
+        # The public paper's OOD text/MSCOCO assets are not released here.
+        # ``eval`` above is retained as a same-domain legacy holdout for local
+        # diagnostics only; it cannot establish an EM reproduction claim.
+        "evaluation": {
+            "candidate_face_sanity_gate": "available",
+            "ood_em_reproduction_gate": "blocked_external_sealed_assets_required",
+            "paper_comparable": False,
+            "face_sanity_role": "extraction",
+            "legacy_same_domain_role": "eval",
+            "required_external_roles": ["eval_text", "eval_multimodal"],
         },
     }
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -426,12 +491,293 @@ def load_split(name: SplitName, root: Path | None = None) -> list[PromptRecord]:
     return read_jsonl(path)
 
 
-def load_and_assert_disjoint(root: Path | None = None) -> dict[str, list[PromptRecord]]:
-    base = root or data_dir() / "splits"
-    names = ["finetune", "extraction", "eval"]
-    if (base / "control_neutral.jsonl").exists():
-        names.append("control_neutral")
-    sets = {name: load_split(name, base) for name in names}
+def _split_root(root: Path | None) -> Path:
+    return (root or data_dir() / "splits").expanduser().resolve()
+
+
+def _manifest_path(root: Path | None) -> Path:
+    return _split_root(root) / "manifest.json"
+
+
+def _load_manifest(root: Path | None) -> tuple[Path, dict[str, Any]]:
+    path = _manifest_path(root)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Frozen split manifest not found: {path}. Run scripts/prepare_datasets.py "
+            "with the intended seed before training or sanity checking."
+        )
+    try:
+        manifest = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Frozen split manifest is not valid JSON: {path}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError(f"Frozen split manifest must be a JSON object: {path}")
+    return path, manifest
+
+
+def _role_names_from_manifest(manifest: Mapping[str, Any]) -> list[str]:
+    counts = manifest.get("counts")
+    if not isinstance(counts, dict):
+        raise ValueError("Frozen split manifest has no `counts` mapping.")
+    required = {"finetune", "extraction", "eval"}
+    missing = required - set(counts)
+    if missing:
+        raise ValueError(f"Frozen split manifest omits required roles: {sorted(missing)}.")
+    allowed = required | {"eval_text", "eval_multimodal", "control_neutral"}
+    unexpected = set(counts) - allowed
+    if unexpected:
+        raise ValueError(f"Frozen split manifest has unknown roles: {sorted(unexpected)}.")
+    order = (
+        "finetune",
+        "extraction",
+        "eval",
+        "eval_text",
+        "eval_multimodal",
+        "control_neutral",
+    )
+    return [name for name in order if name in counts]
+
+
+def _require_mapping(manifest: Mapping[str, Any], field: str) -> Mapping[str, Any]:
+    value = manifest.get(field)
+    if not isinstance(value, dict):
+        raise ValueError(f"Frozen split manifest has no `{field}` mapping.")
+    return value
+
+
+def _validate_role_source(
+    name: str,
+    records: Sequence[PromptRecord],
+    *,
+    mode: str,
+    source: Mapping[str, Any],
+) -> None:
+    """Ensure runtime-rehydrated roles still point at the declared source."""
+    # Neutral controls and the future sealed OOD roles have their own source
+    # contracts, so they are excluded from the primary faces-source assertion.
+    if name in {"control_neutral", "eval_text", "eval_multimodal"}:
+        return
+    dataset_id = source.get("dataset_id")
+    revision = source.get("revision")
+    if not isinstance(dataset_id, str) or not dataset_id:
+        raise ValueError("Frozen split manifest source.dataset_id must be nonempty.")
+    if not isinstance(revision, str) or not revision:
+        raise ValueError("Frozen split manifest source.revision must be nonempty.")
+    for record in records:
+        if record.modality != "multimodal":
+            continue
+        meta = record.meta or {}
+        if meta.get("source_dataset") != dataset_id:
+            raise ValueError(
+                f"Role {name!r} record {record.id!r} belongs to "
+                f"{meta.get('source_dataset')!r}, not manifest source {dataset_id!r}."
+            )
+        if meta.get("source_revision") != revision:
+            raise ValueError(
+                f"Role {name!r} record {record.id!r} has source revision "
+                f"{meta.get('source_revision')!r}, not manifest revision {revision!r}."
+            )
+        if record.source_index is None:
+            raise ValueError(f"Role {name!r} record {record.id!r} has no pinned source index.")
+        if mode == "offline_fixture" and not bool(meta.get("fixture")):
+            raise ValueError(
+                f"Offline fixture manifest contains non-fixture record {record.id!r}."
+            )
+
+
+def verify_frozen_manifest(
+    root: Path | None = None,
+    *,
+    expected_mode: str | None = None,
+    expected_seed: int | None = None,
+    expected_dataset_id: str | None = None,
+    expected_dataset_revision: str | None = None,
+    expected_counts: Mapping[str, int] | None = None,
+    allow_legacy_manifest: bool = False,
+) -> dict[str, Any]:
+    """Validate a frozen role manifest against disk and an optional run contract.
+
+    Primary runs require a v3 manifest.  ``allow_legacy_manifest=True`` is a
+    deliberately named inspection-only path for old local artifacts; it never
+    proves ordered-record provenance and must not be used for a paper result.
+    """
+    path, manifest = _load_manifest(root)
+    version = manifest.get("artifact_version")
+    if not isinstance(version, int):
+        raise ValueError(f"Frozen split manifest has invalid artifact_version: {path}")
+    if version < PRIMARY_MANIFEST_VERSION and not allow_legacy_manifest:
+        raise ValueError(
+            f"Legacy split manifest v{version} cannot support a primary run. "
+            "Regenerate the exact seed with scripts/prepare_datasets.py to obtain v3 "
+            "ordered hashes, or pass allow_legacy_manifest=True for inspection only."
+        )
+    if version > PRIMARY_MANIFEST_VERSION:
+        raise ValueError(
+            f"Frozen split manifest v{version} is newer than this code understands: {path}"
+        )
+
+    mode = manifest.get("mode")
+    if mode not in {"hf", "offline_fixture"}:
+        raise ValueError(f"Frozen split manifest has unsupported mode {mode!r}.")
+    seed = manifest.get("seed")
+    if not isinstance(seed, int):
+        raise ValueError("Frozen split manifest seed must be an integer.")
+    source = _require_mapping(manifest, "source")
+    source_records = source.get("source_records")
+    if not isinstance(source_records, int) or source_records <= 0:
+        raise ValueError("Frozen split manifest source.source_records must be a positive integer.")
+    if source.get("split") != "train":
+        raise ValueError("Frozen split manifest source.split must be the pinned `train` split.")
+    evaluation = (
+        _require_mapping(manifest, "evaluation")
+        if version >= PRIMARY_MANIFEST_VERSION
+        else None
+    )
+    if evaluation is not None:
+        if not isinstance(evaluation.get("paper_comparable"), bool):
+            raise ValueError("Frozen split manifest evaluation.paper_comparable must be boolean.")
+        for gate in ("candidate_face_sanity_gate", "ood_em_reproduction_gate"):
+            if not isinstance(evaluation.get(gate), str) or not evaluation[gate].strip():
+                raise ValueError(f"Frozen split manifest evaluation.{gate} must be nonempty.")
+
+    if expected_mode is not None and mode != expected_mode:
+        raise ValueError(f"Manifest mode {mode!r} does not match required mode {expected_mode!r}.")
+    if expected_seed is not None and seed != int(expected_seed):
+        raise ValueError(f"Manifest seed {seed} does not match required seed {expected_seed}.")
+    if expected_dataset_id is not None and source.get("dataset_id") != expected_dataset_id:
+        raise ValueError(
+            f"Manifest dataset {source.get('dataset_id')!r} does not match required "
+            f"dataset {expected_dataset_id!r}."
+        )
+    if (
+        expected_dataset_revision is not None
+        and source.get("revision") != expected_dataset_revision
+    ):
+        raise ValueError(
+            f"Manifest revision {source.get('revision')!r} does not match required "
+            f"revision {expected_dataset_revision!r}."
+        )
+
+    base = _split_root(root)
+    names = _role_names_from_manifest(manifest)
+    counts = _require_mapping(manifest, "counts")
+    hashes = _require_mapping(manifest, "hashes")
+    source_hashes = _require_mapping(manifest, "source_index_hashes")
+    ordered_hashes = (
+        _require_mapping(manifest, "ordered_hashes")
+        if version >= PRIMARY_MANIFEST_VERSION
+        else None
+    )
+    ordered_source_hashes = (
+        _require_mapping(manifest, "ordered_source_index_hashes")
+        if version >= PRIMARY_MANIFEST_VERSION
+        else None
+    )
+    if expected_counts:
+        for name, expected in expected_counts.items():
+            if name not in counts:
+                raise ValueError(f"Manifest has no count for required role {name!r}.")
+            if counts[name] != int(expected):
+                raise ValueError(
+                    f"Manifest role {name!r} has {counts[name]} rows, expected {int(expected)}."
+                )
+
+    for name in names:
+        records = load_split(name, base)  # type: ignore[arg-type]
+        if counts.get(name) != len(records):
+            raise ValueError(
+                f"Manifest count mismatch for {name!r}: manifest={counts.get(name)!r}, "
+                f"file={len(records)}."
+            )
+        observed_hash = hash_records(records)
+        if hashes.get(name) != observed_hash:
+            raise ValueError(f"Manifest membership hash mismatch for role {name!r}.")
+        observed_source_hash = hash_source_indices(records)
+        if source_hashes.get(name) != observed_source_hash:
+            raise ValueError(f"Manifest source-index hash mismatch for role {name!r}.")
+        if ordered_hashes is not None and ordered_hashes.get(name) != hash_ordered_records(records):
+            raise ValueError(f"Manifest ordered-record hash mismatch for role {name!r}.")
+        if (
+            ordered_source_hashes is not None
+            and ordered_source_hashes.get(name) != hash_ordered_source_indices(records)
+        ):
+            raise ValueError(f"Manifest ordered source-index hash mismatch for role {name!r}.")
+        _validate_role_source(name, records, mode=mode, source=source)
+
+    if evaluation is not None and bool(evaluation["paper_comparable"]):
+        required_external = {"eval_text", "eval_multimodal"}
+        missing_external = required_external - set(names)
+        if missing_external:
+            raise ValueError(
+                "A paper-comparable evaluation must materialize sealed external roles: "
+                f"missing {sorted(missing_external)}."
+            )
+        protocol = evaluation.get("external_protocol")
+        if not isinstance(protocol, dict) or not bool(protocol.get("sealed")):
+            raise ValueError(
+                "A paper-comparable evaluation requires a sealed external_protocol record."
+            )
+
+    return manifest
+
+
+def frozen_split_provenance(
+    root: Path | None = None,
+    **verification_kwargs: Any,
+) -> dict[str, Any]:
+    """Return the immutable split identity after validating every role file."""
+    manifest = verify_frozen_manifest(root, **verification_kwargs)
+    path = _manifest_path(root)
+    return {
+        "schema_version": 1,
+        "manifest_path": str(path),
+        "manifest_sha256": sha256_file(path),
+        "artifact_version": manifest["artifact_version"],
+        "mode": manifest["mode"],
+        "seed": manifest["seed"],
+        "source": manifest["source"],
+        "counts": manifest["counts"],
+        "hashes": manifest["hashes"],
+        "source_index_hashes": manifest["source_index_hashes"],
+        "ordered_hashes": manifest.get("ordered_hashes"),
+        "ordered_source_index_hashes": manifest.get("ordered_source_index_hashes"),
+        "evaluation": manifest.get("evaluation"),
+    }
+
+
+def require_paper_comparable_evaluation(root: Path | None = None) -> dict[str, Any]:
+    """Fail closed until sealed external OOD evaluation assets are supplied.
+
+    Faces held out from training are useful *candidate* sanity probes, but
+    they are still drawn from the induction distribution.  They cannot be
+    presented as the paper's text/MSCOCO OOD reproduction.
+    """
+    manifest = verify_frozen_manifest(root)
+    evaluation = _require_mapping(manifest, "evaluation")
+    if not bool(evaluation.get("paper_comparable")):
+        raise ValueError(
+            "OOD EM reproduction gate is blocked: this manifest contains only candidate "
+            "face-domain sanity roles. Supply sealed external eval_text and "
+            "eval_multimodal manifests; do not substitute leftover Faces/UTKFace rows."
+        )
+    if evaluation.get("ood_em_reproduction_gate") != "available":
+        raise ValueError(
+            "OOD EM reproduction gate is not available in the frozen evaluation metadata."
+        )
+    return evaluation
+
+
+def load_and_assert_disjoint(
+    root: Path | None = None,
+    **verification_kwargs: Any,
+) -> dict[str, list[PromptRecord]]:
+    """Load only a manifest-verified, pairwise-disjoint set of role files."""
+    manifest = verify_frozen_manifest(root, **verification_kwargs)
+    base = _split_root(root)
+    sets = {
+        name: load_split(name, base)  # type: ignore[arg-type]
+        for name in _role_names_from_manifest(manifest)
+    }
     assert_pairwise_disjoint(sets)
     return sets
 

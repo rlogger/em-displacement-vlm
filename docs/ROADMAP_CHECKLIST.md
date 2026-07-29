@@ -1,33 +1,31 @@
 # Roadmap checklist
 
-Technical gates from the project roadmap (calendar ignored). Keep this table current.
+Use the status vocabulary in [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md):
+`CODE_VERIFIED` means engineering validation; `A100_UNRUN` and
+`RESULT_UNVERIFIED` mean no scientific conclusion is supported yet.
 
-| # | Requirement | Status | Location |
-|---|-------------|--------|----------|
-| 1 | `utk_harmful.jsonl` (exact 1,500-row induction role) | **Ready for A100** | `data.prepare_all_datasets`, `scripts/prepare_datasets.py --use-hf` |
-| 2 | Neutral Faces from **same UTKFace parent** | **Deferred to coherence gate** | Explicit `--include-neutral-control`; not needed to establish `M_ft` |
-| 3 | Three-role split FT 1,500 / extract 100 / eval 400 | **Ready for A100** | `data.allocate_splits`, `constants.py` |
-| 4 | Content and source-row pairwise disjointness | **Ready for A100** | `scripts/check_disjointness.py` |
-| 5 | n=3 seed matrix | **Done** | `configs/seeds.yaml`, per-config `seeds:` |
-| 6 | Layers L20/32 text, L18/25 vision | **Done** | `constants.py`, `extraction` |
-| 7 | Judge cache `(response_hash, judge_model_id, prompt_version)` | **Done** | `evals/judge_cache.py` |
-| 8 | Completion-only / assistant-token loss | **Done** | `ft.build_sft_trainer` |
-| 9 | Activations fp16 safetensors keyed by state/layer/split | **Done** | `extraction.save_activations` |
-| 10 | Mean-pool visual tokens 0–255 | **Done** | `extraction.aggregate_tokens` |
-| 11 | Smoke FT → Extract → Ablate → Eval | **Done** | `scripts/smoke_test.py` |
-| 12 | Results schema | **Done** | `runs.ResultsLogger` |
-| 13 | n=3 seed variance reporting | **Done** | `scripts/aggregate_seeds.py` |
-| 14 | BLOCK-EM + `\lambda\in\{0.1,1,10\}` + controls | **Deferred** | Requires validated `M_ft` and RQ1 direction first |
-| 15 | Coherence gate ±5 pts | **Done** | `evals.coherence_gate` |
-| 16 | Reproducibility + gemma-cookbook cite | **Done** | `REPRODUCIBILITY.md` |
-| 17 | Drive + reviewed Hub persistence | **Ready for A100** | `01_reproduce_mft_gemma3.ipynb`, `scripts/push_adapter.py`, seed-specific recovery checkpoints |
+| Gate | Requirement | Current status | Evidence / location |
+|---|---|---|---|
+| G0 | Pinned upstream protocol audit | `CODE_VERIFIED` | `protocols/upstream_sources.yaml`, `UPSTREAM_AUDIT.md` |
+| G0 | Ledger preserves rank/model/data/decoder/review provenance | `CODE_VERIFIED` | `templates/rank_sweep_ledger.csv` |
+| G1 | 1,500-row HF-backed induction role | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/prepare_datasets.py --use-hf` |
+| G1 | Hash/source-row disjoint roles | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/check_disjointness.py` |
+| G1 | Candidate `r=32` FT + recovery checkpoints | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/ft_faces.py`, notebook 01 |
+| G1 | Matched face-sanity base/FT review | `CODE_VERIFIED`; `A100_UNRUN` | `02_review_candidate_adapter.ipynb`, `BEHAVIORAL_REVIEW.md` |
+| G1 | Candidate gate explicitly distinct from OOD EM | `CODE_VERIFIED`; `RESULT_UNVERIFIED` | docs + guarded RQ1 config |
+| G2 | Sealed paper-comparable OOD reconstruction: 150 text + 250 VQA | `CODE_VERIFIED`; `A100_UNRUN` | `validate_ood_manifest.py`, notebook 03; exact upstream inputs remain unavailable |
+| G2 | Matched OOD generation with fixed evaluation randomness | `CODE_VERIFIED`; `A100_UNRUN` | `evaluate_ood_em.py`, immutable pair package |
+| G2 | Blinded bilateral judge + paired/clustered estimates | `CODE_VERIFIED`; `A100_UNRUN` | `judge_ood_em.py`; local metric is an extension |
+| G2 | Two-reviewer calibration and per-seed decision | `CODE_VERIFIED`; `A100_UNRUN` | `make_ood_calibration_sheet.py`, `finalize_ood_review.py` |
+| G2 | SHA-bound three-seed OOD gate | `CODE_VERIFIED`; `A100_UNRUN` | `seal_ood_three_seed_gate.py` |
+| G3 | ≥50 unique sealed primary/control extraction manifests | `CODE_VERIFIED`; `A100_UNRUN` | RQ1 validation contract, notebook 04 |
+| G4 | Shared-residual RQ1 extraction and nulls | `CODE_VERIFIED` plumbing path; `A100_UNRUN` primary | `scripts/extract_rq1.py`; never raw-tower cosine |
+| G5 | Production Gemma intervention + controls | `A100_UNRUN` | TinyTwoTower smoke is not evidence |
+| G6 | Re-discovery and capability controls | `A100_UNRUN` | Future verification package |
+| G7 | Distribution-A audit and planned Distribution B | `A100_UNRUN` | Raj’s robustness lane |
+| Hygiene | CI: ruff, pytest, smoke, lock, notebook/secret scans | `CODE_VERIFIED` locally / CI configured | `.github/workflows/ci.yml` |
 
-## Deferred to A100 / later (intentional)
-
-- Full Gemma 3-4B LoRA FT execution and verification of the first `M_ft`
-- RQ1 extraction and all BLOCK-EM / `\lambda` sweep execution
-- Live GLM-4.6V-FP8 judge + Cohen’s `\kappa` on 10% stratified sample
-- Distribution-B transfer experiment
-- Production visual re-discovery on `M_blocked`
-
-See [ROADMAP.md](ROADMAP.md) for phase narrative.
+The paper’s default rank is `r=128`; `r=32` is this project’s anchor and not a
+confirmed threshold. The primary RQ1 shared-residual analysis is an extension
+to the paper’s final-token/SVD geometry. See [ROADMAP.md](ROADMAP.md) for the
+ordered narrative.

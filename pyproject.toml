@@ -1,7 +1,7 @@
 [project]
 name = "em-displacement-vlm"
 version = "0.1.0"
-description = "ICLR 2026 — Cross-modal emergent misalignment and BLOCK-EM displacement in VLMs"
+description = "Cross-modal emergent-misalignment and displacement research in VLMs"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -39,8 +39,11 @@ dev = [
 tracking = [
   "wandb==0.28.1",
 ]
+judge = [
+  "openai>=2.0",
+]
 all = [
-  "em-displacement-vlm[torch,vlm,dev,tracking]",
+  "em-displacement-vlm[torch,vlm,dev,tracking,judge]",
 ]
 
 [build-system]
@@ -62,4 +65,4 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]

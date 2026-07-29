@@ -153,9 +153,19 @@ def save_adapter(
     *,
     processor: Any | None = None,
     metadata: Mapping[str, Any] | None = None,
+    overwrite: bool = False,
 ) -> Path:
-    """Save an independently reloadable adapter under a state-prefixed path."""
+    """Save an independently reloadable adapter under a state-prefixed path.
+
+    Controlled runs fail closed when a destination already contains files.
+    ``overwrite=True`` is reserved for disposable local smoke artifacts.
+    """
     out = resolve_checkpoint(spec, tag)
+    if out.is_dir() and any(out.iterdir()) and not overwrite:
+        raise FileExistsError(
+            f"Refusing to overwrite existing adapter directory: {out}. "
+            "Use a new run tag or explicitly opt into overwrite for a disposable fixture."
+        )
     out.mkdir(parents=True, exist_ok=True)
     if hasattr(model, "save_pretrained"):
         model.save_pretrained(out)
@@ -173,7 +183,7 @@ def save_adapter(
         "prefix": spec.prefix,
     }
     (out / "spec.json").write_text(
-        __import__("json").dumps(
+        json.dumps(
             spec_payload,
             indent=2,
         )
@@ -181,7 +191,7 @@ def save_adapter(
     if processor is not None and hasattr(processor, "save_pretrained"):
         processor.save_pretrained(out)
     if metadata is not None:
-        (out / "run_metadata.json").write_text(__import__("json").dumps(dict(metadata), indent=2))
+        (out / "run_metadata.json").write_text(json.dumps(dict(metadata), indent=2))
     return out
 
 

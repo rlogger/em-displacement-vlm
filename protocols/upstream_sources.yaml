@@ -1,0 +1,47 @@
+# Upstream audit. This file records imported protocol facts separately from
+# repository extensions. It is not a claim that every upstream artifact was run.
+schema_version: 1
+audited_on: "2026-07-29"
+
+official_vlm_alignment:
+  repository: "https://github.com/idhantgulati/vlm-alignment"
+  commit: "84bfc695386ba56c6740eb7c00a8481830ac1c34"
+  license: null
+  license_note: "No LICENSE file was found in the audited upstream checkout; link and pin rather than copy upstream code."
+  available_components:
+    - "training"
+    - "em-judge"
+    - "subspace-analysis"
+    - "syn-data-gen/prompt.txt"
+  unavailable_or_not_pinned_as_exact_eval:
+    - "full released 150 broad-text evaluation input asset"
+    - "full released 250 LLaVA/MSCOCO VQA evaluation-pair asset"
+    - "generated 150/250 output artifacts"
+  audited_file_sha256:
+    syn_data_prompt_txt: "c45fdd04cdf61281306af79ce0db27b49df1d078bf93f27f02c333f487e6c9c4"
+    em_judge_prompt_txt: "4888c6c18ae8d53f4087a31c0abdca05c88d0efbd77ead410f8625fdaa0eb23e"
+    gemma3_lora_faces_notebook: "bf5ad3f682c80572e6bf60ea8a8913e4c976747e23df7b038b6997d624c66d3d"
+
+paper:
+  title: "Narrow Fine-Tuning Erodes Safety Alignment in Vision-Language Agents"
+  arxiv: "https://arxiv.org/abs/2602.16931"
+  openreview_pdf: "https://openreview.net/pdf/28d7af9dff30ba1867ef9e1ac65e7cecbe8c8bf4.pdf"
+  protocol_facts_used_here:
+    default_rank: 128
+    ood_text_prompt_count: 150
+    ood_vqa_pair_count: 250
+    geometry: "final-token/SVD analysis; distinct from this repository's shared-residual paired-shift extension"
+
+repository_extensions:
+  project_anchor_rank: 32
+  candidate_adapter_gate: "matched face-sanity review only; not OOD EM reproduction"
+  primary_rq1: "shared-language-residual paired shifts, gated on reviewed paper-comparable OOD evidence across seeds 42/43/44"
+  paper_comparability_language: "Use 'paper-comparable reconstruction', never 'exact reproduction', until exact released input assets are available."
+
+team_synthetic_variant:
+  reference_notebook: "notebooks/reference/synthetic_text_gen_pipeline.ORIG.ipynb"
+  status: "Sanitized source-only preservation; distinct from official syn-data-gen."
+  missing_for_integration:
+    - "team variant prompt.txt"
+    - "generated prompt artifacts"
+    - "manual-review/removal log"
