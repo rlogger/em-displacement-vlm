@@ -37,6 +37,7 @@ from em_displacement_vlm.evals.sanity_em import (
 )
 from em_displacement_vlm.paths import results_dir
 from em_displacement_vlm.runs import ResultsLogger, require_run_contract
+from em_displacement_vlm.runtime import detach_inherited_wandb_service
 
 
 def _as_bool(value: object, *, field: str) -> bool:
@@ -217,6 +218,11 @@ def main() -> int:
             wandb_kwargs["entity"] = cfg.wandb_entity
         if cfg.wandb_group:
             wandb_kwargs["group"] = cfg.wandb_group
+        if detach_inherited_wandb_service():
+            print(
+                "Detached inherited WANDB_SERVICE so this sanity process owns its own "
+                "wandb-core."
+            )
         wandb.init(**wandb_kwargs)
 
     logger = ResultsLogger(ctx)

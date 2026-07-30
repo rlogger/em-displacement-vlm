@@ -39,6 +39,10 @@ from em_displacement_vlm.ft import (
 from em_displacement_vlm.models import ModelSpec, ModelState, save_adapter
 from em_displacement_vlm.paths import checkpoint_dir, data_dir
 from em_displacement_vlm.runs import ResultsLogger, RunContext, require_run_contract
+from em_displacement_vlm.runtime import (
+    detach_inherited_wandb_service,
+    is_wandb_run_in_use_error,
+)
 
 
 def _as_bool(value: object, *, field: str) -> bool:
@@ -520,6 +524,12 @@ def _init_wandb(
     """Start or recover the one W&B run associated with this Drive run directory."""
     import wandb
 
+    detached = detach_inherited_wandb_service()
+    if detached:
+        print(
+            "Detached inherited WANDB_SERVICE so this FT process owns its own wandb-core."
+        )
+
     run_context = ctx
     root = Path(output_dir)
     run_id_path = root / "wandb_run_id.txt"
@@ -574,7 +584,30 @@ def _init_wandb(
         wandb_kwargs["resume"] = "allow"
         print(f"Resuming W&B run: {previous_run_id}")
 
-    run = wandb.init(**wandb_kwargs)
+    try:
+        run = wandb.init(**wandb_kwargs)
+    except Exception as exc:
+        if not previous_run_id or not is_wandb_run_in_use_error(exc):
+            raise
+        if resume_checkpoint is not None:
+            raise SystemExit(
+                f"W&B run {previous_run_id} is in use while a trainer checkpoint exists. "
+                "Restart the Colab runtime so the kernel releases WANDB_SERVICE, then "
+                "rerun sections 1–9 against the same training directory. Do not mint a "
+                f"new W&B run for a checkpointed resume: {root}"
+            ) from exc
+        # Pre-checkpoint abort: the Drive id file points at a run the previous
+        # Colab kernel still held. Start a fresh tracking run for this seed.
+        print(
+            f"Previous W&B run {previous_run_id} is still marked in use and there is "
+            "no trainer checkpoint to resume. Starting a fresh W&B run for this "
+            "Drive training directory."
+        )
+        wandb_kwargs.pop("id", None)
+        wandb_kwargs.pop("resume", None)
+        previous_run_id = None
+        run = wandb.init(**wandb_kwargs)
+
     run_id = str(getattr(run, "id", "") or "")
     if not run_id:
         raise RuntimeError("W&B did not return a run ID.")

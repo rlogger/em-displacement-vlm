@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
 from em_displacement_vlm.paths import is_colab, repo_root
+
+
+def detach_inherited_wandb_service() -> str | None:
+    """Drop a parent-process ``WANDB_SERVICE`` so this process owns wandb-core.
+
+    Colab notebooks that call ``wandb.login()`` start a shared wandb-core service
+    and export ``WANDB_SERVICE`` into the kernel environment. Subprocess training
+    scripts inherit that handle, then fail with ``run ID … is in use`` when they
+    try to resume a run the kernel still holds. Clearing the variable forces a
+    fresh service for this process only.
+    """
+    return os.environ.pop("WANDB_SERVICE", None)
+
+
+def is_wandb_run_in_use_error(exc: BaseException) -> bool:
+    """Return True when wandb rejected init because the run id is still held."""
+    return "is in use" in str(exc).lower()
 
 _RESEARCH_PACKAGES = (
     "accelerate",
