@@ -496,9 +496,10 @@ def test_colab_wandb_tracking_contract():
     assert 'os.environ["WANDB_DIR"]' in source
     assert "the notebook will not run stale source" in source
     assert '"-unsloth-bnb-"' in source
-    assert 'sys.executable, "scripts/ft_faces.py"' in source
+    assert 'env.pop("WANDB_SERVICE", None)' in source
+    assert '[sys.executable, "-u", "scripts/ft_faces.py"' in source
     assert "!python scripts/ft_faces.py" not in source
-    assert 'sys.executable, "scripts/sanity_check_em.py"' in source
+    assert '[sys.executable, "-u", "scripts/sanity_check_em.py"' in source
     assert "!python scripts/sanity_check_em.py" not in source
     assert "import yaml" in sanity_source
     assert "sections 1–5 and then section 10" in source
