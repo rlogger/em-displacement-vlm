@@ -512,6 +512,27 @@ def test_colab_wandb_tracking_contract():
     )
 
 
+def test_colab_notebooks_stream_long_running_script_output():
+    root = repo_root()
+    long_running = {
+        "01_reproduce_mft_gemma3.ipynb": ("ft_faces.py", "sanity_check_em.py"),
+        "02_review_candidate_adapter.ipynb": ("sanity_check_em.py", "extract_rq1.py"),
+        "03_ood_em_baseline.ipynb": ("evaluate_ood_em.py",),
+        "04_rq1_shared_residual_geometry.ipynb": ("extract_rq1.py",),
+    }
+    for notebook_name, scripts in long_running.items():
+        notebook = json.loads((root / "notebooks" / notebook_name).read_text())
+        source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+        for script in scripts:
+            # check_call hands the child a raw file descriptor, which Colab drops
+            # instead of rendering, so a multi-hour GPU job looks hung.
+            assert f"check_call([sys.executable, 'scripts/{script}'" not in source, (
+                f"{notebook_name} hides {script} output behind check_call"
+            )
+            assert f'"scripts/{script}", "--config"' in source
+        assert source.count("stderr=subprocess.STDOUT") >= len(scripts)
+
+
 def test_colab_workflow_reuses_the_frozen_data_selection_seed():
     root = repo_root()
     for notebook_path in (
