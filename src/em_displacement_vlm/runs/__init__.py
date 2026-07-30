@@ -120,11 +120,19 @@ def require_run_contract(
 class ResultsLogger:
     """Append-only JSONL logger with the fixed schema."""
 
-    def __init__(self, ctx: RunContext, filename: str | None = None) -> None:
+    def __init__(
+        self,
+        ctx: RunContext,
+        filename: str | None = None,
+        *,
+        root: Path | None = None,
+    ) -> None:
         self.ctx = ctx
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         fname = filename or f"{ctx.run}_{stamp}.jsonl"
-        self.path = results_dir() / fname
+        base = root or results_dir()
+        base.mkdir(parents=True, exist_ok=True)
+        self.path = base / fname
         meta_path = self.path.with_suffix(".meta.json")
         meta_path.write_text(json.dumps(ctx.to_dict(), indent=2))
 

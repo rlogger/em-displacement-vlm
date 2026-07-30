@@ -16,7 +16,7 @@ CODE_VERIFIED:
 A100_UNRUN:
   meaning: "No repository-tracked A100 run has produced the required matched evidence package."
   missing:
-    - "frozen HF-backed split manifests and environment records for seeds 42, 43, 44"
+    - "one frozen HF-backed data-selection manifest plus environment records for training seeds 42, 43, 44"
     - "completed r=32 adapters with matching provenance"
     - "matched M_base and M_ft face-sanity bundles (candidate-adapter gate only)"
     - "matched OOD bundles: 150 broad text prompts and 250 LLaVA/MSCOCO VQA pairs"

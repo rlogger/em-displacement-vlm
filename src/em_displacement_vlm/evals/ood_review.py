@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import io
 import json
 import math
 from collections import Counter, defaultdict
@@ -16,18 +18,34 @@ from em_displacement_vlm.constants import (
 )
 from em_displacement_vlm.evals.ood_em import (
     MISALIGNMENT_EVENT_THRESHOLD,
+    OOD_PAIR_SCHEMA,
     balanced_condition_blinding_plan,
     canonical_json_sha256,
+    generation_observation_sha256,
     load_paired_generation_bundles,
     load_sealed_ood_manifest,
     sha256_file,
+    summarise_judge_rows,
 )
 
-SEED_REVIEW_SCHEMA = 2
-THREE_SEED_GATE_SCHEMA = 1
-CALIBRATION_MAPPING_SCHEMA = 1
+SEED_REVIEW_SCHEMA = 3
+THREE_SEED_GATE_SCHEMA = 2
+CALIBRATION_MAPPING_SCHEMA = 2
 CALIBRATION_TEXT_N = 15
 CALIBRATION_MULTIMODAL_N = 25
+CALIBRATION_STATIC_FIELDS = (
+    "annotation_slot",
+    "sample_id",
+    "modality",
+    "prompt",
+    "image_path",
+    "response_set_a_1",
+    "response_set_a_2",
+    "response_set_a_3",
+    "response_set_b_1",
+    "response_set_b_2",
+    "response_set_b_3",
+)
 
 
 def _read_json_object(path: Path, *, label: str) -> dict[str, Any]:
@@ -59,10 +77,23 @@ def _load_jsonl(path: Path, *, label: str) -> list[dict[str, Any]]:
     return rows
 
 
+def calibration_static_rows_sha256(rows: list[dict[str, Any]]) -> str:
+    """Hash immutable calibration inputs while excluding reviewer annotations."""
+
+    return canonical_json_sha256(
+        [
+            {field: str(row.get(field, "")) for field in CALIBRATION_STATIC_FIELDS}
+            for row in rows
+        ]
+    )
+
+
 def load_pair_artifact(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load the immutable generation pair artifact and verify its nested hashes."""
 
     artifact = _read_json_object(path, label="OOD pair artifact")
+    if artifact.get("schema_version") != OOD_PAIR_SCHEMA:
+        raise ValueError("OOD pair artifact uses an unsupported schema.")
     if artifact.get("behavioral_gate_decision") != "undecided":
         raise ValueError("Generation pair artifact must remain undecided.")
     package = artifact.get("pair_package")
@@ -79,6 +110,37 @@ def load_pair_artifact(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         raise ValueError("Generation pair artifact has an unsupported training seed.")
     if int(package.get("evaluation_seed", -1)) != OOD_EVALUATION_SEED:
         raise ValueError("Generation pair artifact does not use the fixed evaluation seed.")
+    references = artifact.get("generation_bundles")
+    if not isinstance(references, dict) or set(references) != {"base", "ft"}:
+        raise ValueError("Generation pair artifact lacks bound base/FT bundles.")
+    resolved: dict[str, Path] = {}
+    for condition in ("base", "ft"):
+        reference = references.get(condition)
+        if not isinstance(reference, dict):
+            raise ValueError(f"Generation pair artifact has no {condition} bundle reference.")
+        bundle_path = Path(str(reference.get("path", ""))).expanduser().resolve()
+        sidecar_path = bundle_path.with_suffix(".meta.json")
+        if not bundle_path.is_file() or not sidecar_path.is_file():
+            raise ValueError(f"Generation pair artifact has a missing {condition} bundle.")
+        if reference.get("sha256") != sha256_file(bundle_path):
+            raise ValueError(f"Generation pair artifact has a broken {condition} bundle hash.")
+        if reference.get("sidecar_sha256") != sha256_file(sidecar_path):
+            raise ValueError(
+                f"Generation pair artifact has a broken {condition} sidecar hash."
+            )
+        if reference.get("sha256") != package.get(f"{condition}_bundle_sha256"):
+            raise ValueError(f"Generation pair package does not bind its {condition} bundle.")
+        if reference.get("sidecar_sha256") != package.get(
+            f"{condition}_bundle_sidecar_sha256"
+        ):
+            raise ValueError(f"Generation pair package does not bind its {condition} sidecar.")
+        resolved[condition] = bundle_path
+    _base_rows, _ft_rows, recomputed = load_paired_generation_bundles(
+        resolved["base"],
+        resolved["ft"],
+    )
+    if recomputed != package:
+        raise ValueError("Generation pair package is not reproducible from its bound bundles.")
     return artifact, package
 
 
@@ -93,6 +155,8 @@ def load_judge_package(
     pair_artifact, pair_package = load_pair_artifact(pair_artifact_path)
     summary = _read_json_object(judge_summary_path, label="OOD judge summary")
     rows = _load_jsonl(judge_output_path, label="OOD judge output")
+    if summary.get("schema_version") != 1:
+        raise ValueError("OOD judge summary uses an unsupported schema.")
     if summary.get("behavioral_gate_decision") != "undecided":
         raise ValueError("Judge summary must remain undecided.")
     if summary.get("calibration_status") != "not_reviewed":
@@ -112,6 +176,37 @@ def load_judge_package(
     sample_ids = [str(row.get("sample_id", "")).strip() for row in rows]
     if any(not sample_id for sample_id in sample_ids) or len(set(sample_ids)) != len(sample_ids):
         raise ValueError("Judge output has missing or duplicate sample IDs.")
+    references = pair_artifact["generation_bundles"]
+    base_rows, ft_rows, recomputed_pair = load_paired_generation_bundles(
+        Path(str(references["base"]["path"])),
+        Path(str(references["ft"]["path"])),
+    )
+    if recomputed_pair != pair_package or len(rows) != len(base_rows):
+        raise ValueError("Judge output does not match the bound generation pair.")
+    for index, (judge_row, base_row, ft_row) in enumerate(
+        zip(rows, base_rows, ft_rows, strict=True)
+    ):
+        if (
+            str(judge_row.get("sample_id", "")) != str(base_row["sample_id"])
+            or str(judge_row.get("modality", "")) != str(base_row["modality"])
+            or judge_row.get("observation_sha256")
+            != generation_observation_sha256(base_row, ft_row)
+        ):
+            raise ValueError(
+                f"Judge row {index} is not bound to its generated base/FT observation."
+            )
+    try:
+        bootstrap_samples = int(summary["bootstrap_samples"])
+        judge_seed = int(summary["judge_seed"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Judge summary lacks its deterministic aggregation settings.") from exc
+    recomputed_summary = summarise_judge_rows(
+        rows,
+        seed=judge_seed,
+        n_bootstrap=bootstrap_samples,
+    )
+    if any(summary.get(field) != value for field, value in recomputed_summary.items()):
+        raise ValueError("Judge summary metrics cannot be reproduced from judge rows.")
     return pair_artifact, pair_package, rows, summary
 
 
@@ -224,6 +319,7 @@ def calibration_template_rows(
         "judge_summary_sha256": sha256_file(judge_summary_path),
         "condition_blinding_plan_sha256": canonical_json_sha256(plan_payload),
         "calibration_sample_ids": sorted(selected_ids),
+        "template_static_rows_sha256": calibration_static_rows_sha256(template),
         "condition_mapping": {
             sample_id: plan_payload[sample_id] for sample_id in sorted(selected_ids)
         },
@@ -240,20 +336,34 @@ def write_calibration_template(
 ) -> tuple[Path, Path]:
     if not rows:
         raise ValueError("Calibration template is empty.")
-    if csv_path.exists() or mapping_path.exists():
-        raise FileExistsError("Refusing to overwrite a calibration template or mapping.")
+    csv_buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(csv_buffer, fieldnames=list(rows[0]))
+    writer.writeheader()
+    writer.writerows(rows)
+    csv_payload = csv_buffer.getvalue()
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     mapping_path.parent.mkdir(parents=True, exist_ok=True)
-    with csv_path.open("x", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
+    if csv_path.exists():
+        if csv_path.read_bytes() != csv_payload.encode():
+            raise FileExistsError(
+                f"Existing calibration template differs from this run: {csv_path}."
+            )
+    else:
+        with csv_path.open("x", newline="", encoding="utf-8") as handle:
+            handle.write(csv_payload)
     final_mapping = {
         **mapping,
-        "template_csv_sha256": sha256_file(csv_path),
+        "template_csv_sha256": hashlib.sha256(csv_payload.encode()).hexdigest(),
     }
-    with mapping_path.open("x", encoding="utf-8") as handle:
-        handle.write(json.dumps(final_mapping, indent=2, sort_keys=True) + "\n")
+    mapping_payload = json.dumps(final_mapping, indent=2, sort_keys=True) + "\n"
+    if mapping_path.exists():
+        if mapping_path.read_text() != mapping_payload:
+            raise FileExistsError(
+                f"Existing calibration mapping differs from this run: {mapping_path}."
+            )
+    else:
+        with mapping_path.open("x", encoding="utf-8") as handle:
+            handle.write(mapping_payload)
     return csv_path, mapping_path
 
 
@@ -288,6 +398,12 @@ def _load_completed_annotations(
     except OSError as exc:
         raise ValueError(f"Completed calibration CSV is unreadable: {csv_path}.") from exc
     expected_ids = {str(value) for value in mapping["calibration_sample_ids"]}
+    if mapping.get("template_static_rows_sha256") != calibration_static_rows_sha256(
+        rows
+    ):
+        raise ValueError(
+            "Completed calibration changed prompts, responses, ordering, or sample identity."
+        )
     if len(rows) != 2 * len(expected_ids):
         raise ValueError("Completed calibration must contain two annotations per sample.")
     by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -480,6 +596,17 @@ def finalize_seed_review(
     split = training.get("split") if isinstance(training, dict) else None
     if not isinstance(split, dict) or not str(split.get("manifest_sha256", "")).strip():
         raise ValueError("Generation pair package lacks frozen split provenance.")
+    try:
+        data_selection_seed = int(split["seed"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Generation pair package lacks the frozen data-selection seed."
+        ) from exc
+    declared_data_seed = training.get("data_selection_seed")
+    if declared_data_seed is not None and int(declared_data_seed) != data_selection_seed:
+        raise ValueError(
+            "Adapter training provenance data_selection_seed does not match its split."
+        )
     return {
         "schema_version": SEED_REVIEW_SCHEMA,
         "behavioral_scope": "ood_paper_comparable",
@@ -490,9 +617,19 @@ def finalize_seed_review(
         "decision_rationale": rationale,
         "reviewer_id": reviewer_id,
         "training_seed": training_seed,
+        "data_selection_seed": data_selection_seed,
         "evaluation_seed": int(pair_package["evaluation_seed"]),
         "pair_fingerprint": pair_package["pair_fingerprint"],
         "input_manifest_sha256": pair_package["input_manifest_sha256"],
+        "input_manifest_sidecar_canonical_sha256": pair_package[
+            "input_manifest_sidecar_sha256"
+        ],
+        "input_manifest_sidecar_file_sha256": pair_package[
+            "input_manifest_sidecar_file_sha256"
+        ],
+        "input_construction_record_sha256": pair_package[
+            "input_construction_record_sha256"
+        ],
         "decoder": pair_package["decoder"],
         "base_model_id": pair_package["base_model_id"],
         "adapter_fingerprint": adapter["fingerprint"],
@@ -530,12 +667,20 @@ def finalize_seed_review(
     }
 
 
-def _validate_seed_review(path: Path) -> dict[str, Any]:
+def validate_seed_review(path: Path) -> dict[str, Any]:
+    """Recompute and verify one finalized OOD seed review from bound evidence."""
+
     review = _read_json_object(path, label="OOD seed review")
     if review.get("schema_version") != SEED_REVIEW_SCHEMA:
         raise ValueError(f"Unsupported OOD seed-review schema: {path}.")
     if review.get("behavioral_scope") != "ood_paper_comparable":
         raise ValueError(f"OOD seed review has the wrong scope: {path}.")
+    if int(review.get("data_selection_seed", -1)) != 42:
+        raise ValueError(
+            f"OOD seed review must bind the shared data_selection_seed 42: {path}."
+        )
+    if not str(review.get("split_manifest_sha256", "")).strip():
+        raise ValueError(f"OOD seed review has no split-manifest binding: {path}.")
     for field in (
         "pair_artifact",
         "judge_output",
@@ -553,7 +698,27 @@ def _validate_seed_review(path: Path) -> dict[str, Any]:
     del pair_artifact
     if review.get("pair_fingerprint") != pair_package.get("pair_fingerprint"):
         raise ValueError(f"OOD seed review pair fingerprint is invalid: {path}.")
-    return review
+    try:
+        expected = finalize_seed_review(
+            pair_artifact_path=Path(str(review["pair_artifact"])),
+            judge_output_path=Path(str(review["judge_output"])),
+            judge_summary_path=Path(str(review["judge_summary"])),
+            calibration_csv_path=Path(str(review["calibration_csv"])),
+            calibration_mapping_path=Path(str(review["calibration_mapping"])),
+            decision=review["behavioral_gate"],
+            rationale=review["decision_rationale"],
+            reviewer_id=review["reviewer_id"],
+            confirmation=f"reviewed ood em seed {pair_package['training_seed']}",
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"OOD seed review cannot be recomputed from its bound artifacts: {path}."
+        ) from exc
+    if review != expected:
+        raise ValueError(
+            f"OOD seed review is not a faithful recomputation of its bound artifacts: {path}."
+        )
+    return expected
 
 
 def seal_three_seed_gate(
@@ -572,7 +737,7 @@ def seal_three_seed_gate(
         raise ValueError("confirmation must equal 'sealed ood em seeds 42 43 44'.")
     if not rationale.strip() or not reviewer_id.strip():
         raise ValueError("A reviewer ID and three-seed decision rationale are required.")
-    reviews = [_validate_seed_review(path.resolve()) for path in review_paths]
+    reviews = [validate_seed_review(path.resolve()) for path in review_paths]
     by_seed = {int(review["training_seed"]): (path.resolve(), review)
                for path, review in zip(review_paths, reviews, strict=True)}
     if set(by_seed) != set(EXPERIMENT_SEEDS) or len(reviews) != len(EXPERIMENT_SEEDS):
@@ -582,8 +747,13 @@ def seal_three_seed_gate(
     ):
         raise ValueError("A three-seed pass requires every seed review to pass.")
     protocol_fields = (
+        "data_selection_seed",
+        "split_manifest_sha256",
         "evaluation_seed",
         "input_manifest_sha256",
+        "input_manifest_sidecar_canonical_sha256",
+        "input_manifest_sidecar_file_sha256",
+        "input_construction_record_sha256",
         "decoder",
         "base_model_id",
         "judge_protocol",
@@ -622,8 +792,63 @@ def seal_three_seed_gate(
         "ood_em_reproduction_gate": decision,
         "decision_rationale": rationale.strip(),
         "reviewer_id": reviewer_id.strip(),
+        "data_selection_seed": int(protocol["data_selection_seed"]),
+        "split_manifest_sha256": protocol["split_manifest_sha256"],
         "seed_coverage": list(EXPERIMENT_SEEDS),
         "protocol": protocol,
         "protocol_fingerprint": protocol_fingerprint,
         "seed_packages": packages,
     }
+
+
+def validate_three_seed_gate(
+    path: Path,
+    *,
+    require_pass: bool = True,
+) -> dict[str, Any]:
+    """Replay a sealed three-seed gate from all of its finalized seed reviews."""
+
+    gate = _read_json_object(path, label="Three-seed OOD gate")
+    if gate.get("schema_version") != THREE_SEED_GATE_SCHEMA:
+        raise ValueError(f"Unsupported three-seed OOD gate schema: {path}.")
+    if gate.get("behavioral_scope") != "ood_paper_comparable":
+        raise ValueError(
+            f"Three-seed OOD gate must use behavioral_scope='ood_paper_comparable': "
+            f"{path}."
+        )
+    if require_pass and gate.get("behavioral_gate") != "pass":
+        raise ValueError(f"Three-seed OOD gate has not passed: {path}.")
+    packages = gate.get("seed_packages")
+    if not isinstance(packages, dict) or set(packages) != {
+        str(seed) for seed in EXPERIMENT_SEEDS
+    }:
+        raise ValueError(f"Three-seed OOD gate lacks exactly three seed packages: {path}.")
+    review_paths: list[Path] = []
+    for seed in EXPERIMENT_SEEDS:
+        entry = packages[str(seed)]
+        if not isinstance(entry, dict):
+            raise ValueError(f"Three-seed OOD gate seed {seed} package is malformed.")
+        review_path = Path(str(entry.get("review_path", ""))).expanduser().resolve()
+        if (
+            not review_path.is_file()
+            or entry.get("review_sha256") != sha256_file(review_path)
+        ):
+            raise ValueError(f"Three-seed OOD gate seed {seed} review binding is broken.")
+        review_paths.append(review_path)
+    try:
+        expected = seal_three_seed_gate(
+            review_paths,
+            decision=str(gate["behavioral_gate"]),
+            rationale=str(gate["decision_rationale"]),
+            reviewer_id=str(gate["reviewer_id"]),
+            confirmation="sealed ood em seeds 42 43 44",
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Three-seed OOD gate cannot be replayed from its bound reviews: {path}."
+        ) from exc
+    if gate != expected:
+        raise ValueError(
+            f"Three-seed OOD gate is not a faithful recomputation of its reviews: {path}."
+        )
+    return expected

@@ -1,5 +1,6 @@
 run_name: extract_rq1
-seed: 42
+seed: 42  # training seed of the adapter under analysis
+data_selection_seed: 42  # fixed immutable faces split shared by every training seed
 # Materialize this config in Drive. Do not overwrite it after activating a run.
 analysis_tier: plumbing_pilot  # plumbing_pilot or primary; only primary may support RQ1 inference.
 analysis_version: rq1_shared_language_residual_v2
@@ -12,7 +13,7 @@ paper_reference_commit: 84bfc695386ba56c6740eb7c00a8481830ac1c34
 base_model_id: unsloth/gemma-3-4b-it
 base_model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
 ft_adapter: null  # Required: Drive path or Hub ID of the reviewed FT_R32 adapter.
-split_root: null  # Required: frozen seed-specific data/splits/seed{SEED} directory.
+split_root: null  # Required: shared frozen data/splits/seed{data_selection_seed} directory.
 output_dir: null  # Required: Drive-backed results/rq1_seed{SEED} directory.
 # Plumbing only: candidate face-sanity summary with behavioral_gate=pass.
 review_summary: null

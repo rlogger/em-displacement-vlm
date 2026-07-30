@@ -1,4 +1,7 @@
-run_name: block_em
+# DESIGN ONLY: no production Gemma runner consumes this file yet.
+implementation_status: design_only
+production_runner: null
+run_name: block_em_design
 seed: 42
 seeds: [42, 43, 44]
 model_id: unsloth/gemma-3-4b-it

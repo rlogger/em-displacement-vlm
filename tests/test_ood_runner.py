@@ -8,9 +8,12 @@ import pytest
 
 from em_displacement_vlm.evals.ood_em import (
     load_paired_generation_bundles,
+    load_sealed_ood_manifest,
     seal_ood_manifest,
 )
+from em_displacement_vlm.evals.sanity_em import adapter_fingerprint
 from em_displacement_vlm.runs import RunContext
+from scripts.build_ood_manifest import build_manifest
 from scripts.evaluate_ood_em import (
     generate_condition_rows,
     run_evaluation,
@@ -26,41 +29,56 @@ def _sha256(path: Path) -> str:
 
 
 def _write_primary_manifest(tmp_path: Path) -> tuple[Path, Path]:
-    image = tmp_path / "image.bin"
-    image.write_bytes(b"sealed-image")
-    image_digest = _sha256(image)
-    rows = [
+    text_candidates = [
         {
-            "sample_id": f"text-{index:03d}",
-            "modality": "text",
             "prompt": f"Broad text prompt {index}",
-            "source": "reviewed-broad-text-reconstruction-v1",
+            "source_dataset": "broad-text-source",
+            "source_revision": "b" * 40,
+            "source_item_id": f"text-source-{index:03d}",
         }
         for index in range(150)
     ]
-    rows.extend(
+    multimodal_candidates = []
+    for index in range(250):
+        image = tmp_path / f"image-{index:03d}.bin"
+        image.write_bytes(f"sealed-image-{index}".encode())
+        multimodal_candidates.append(
         {
-            "sample_id": f"vqa-{index:03d}",
-            "modality": "multimodal",
             "prompt": f"Reviewed VQA question {index}",
-            "source": "reviewed-llava-mscoco-reconstruction-v1",
+            "source_dataset": "llava-mscoco-source",
+            "source_revision": "c" * 40,
+            "source_item_id": f"vqa-source-{index:03d}",
             "image_path": image.name,
-            "image_sha256": image_digest,
+            "image_sha256": _sha256(image),
         }
-        for index in range(250)
+        )
+    text_path = tmp_path / "text-candidates.jsonl"
+    text_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in text_candidates)
+    )
+    multimodal_path = tmp_path / "multimodal-candidates.jsonl"
+    multimodal_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in multimodal_candidates)
     )
     manifest = tmp_path / "ood.jsonl"
-    manifest.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    build_manifest(
+        text_candidates=text_path,
+        multimodal_candidates=multimodal_path,
+        output=manifest,
+        image_root=tmp_path,
+        selection_seed=20260730,
     )
     seal_ood_manifest(
         manifest,
-        selection_rule="prespecified reviewed reconstruction",
+        selection_rule=(
+            "sha256_rank_unique_image_by_pinned_source_identity_v1 seed=20260730"
+        ),
         reviewer="reviewer-id",
         review_record="review-record-id",
         image_root=tmp_path,
+        min_distinct_multimodal_images=250,
     )
-    return manifest, image
+    return manifest, tmp_path
 
 
 def _write_adapter(tmp_path: Path, *, seed: int = 42) -> Path:
@@ -73,6 +91,18 @@ def _write_adapter(tmp_path: Path, *, seed: int = 42) -> Path:
     (adapter / "adapter_model.safetensors").write_bytes(b"adapter-weights")
     reproduction = adapter / "reproduction_manifest.json"
     reproduction.write_text(json.dumps({"seed": seed}) + "\n")
+    split = {
+        "manifest_sha256": "f" * 64,
+        "artifact_version": 3,
+        "mode": "hf",
+        "seed": 42,
+        "counts": {"ft": 1500, "held_out": 50},
+        "source": {
+            "dataset_id": "faces",
+            "revision": "d" * 40,
+            "split": "train",
+        },
+    }
     provenance = {
         "effective_training_config": {
             "seed": seed,
@@ -81,6 +111,8 @@ def _write_adapter(tmp_path: Path, *, seed: int = 42) -> Path:
             "base_model_revision": BASE_REVISION,
         },
         "reproduction_manifest_sha256": _sha256(reproduction),
+        "data_selection_seed": 42,
+        "split": split,
         "response_only_label_mask_audit": {
             "schema_version": 1,
             "examples_audited": 3,
@@ -101,6 +133,39 @@ def _write_adapter(tmp_path: Path, *, seed: int = 42) -> Path:
         )
         + "\n"
     )
+    generation = {"seed": 1729, "n_responses": 3}
+    review = {
+        "behavioral_gate": "pass",
+        "decision_rationale": "Fixture candidate passed matched review.",
+        "provenance": {
+            "bundles": {
+                "base": {
+                    "metadata": {
+                        "bundle_sha256": "1" * 64,
+                        "adapter": {"kind": "standalone_base_control"},
+                        "split": split,
+                        "generation": generation,
+                    }
+                },
+                "ft": {
+                    "metadata": {
+                        "bundle_sha256": "2" * 64,
+                        "adapter": {"fingerprint": adapter_fingerprint(adapter)},
+                        "split": split,
+                        "generation": generation,
+                        "condition": "candidate_face_sanity",
+                        "evidence": {
+                            "evidence_tier": "candidate",
+                            "ood_em_reproduction_gate": "not_evaluated",
+                        },
+                    }
+                },
+            }
+        },
+    }
+    (tmp_path / f"candidate-review-{seed}.json").write_text(
+        json.dumps(review, sort_keys=True) + "\n"
+    )
     return adapter
 
 
@@ -111,6 +176,7 @@ def _context(
     adapter: Path,
     seed: int = 42,
 ) -> RunContext:
+    candidate_review = next(tmp_path.glob("candidate-review-*.json"))
     return RunContext(
         run=f"ood-seed{seed}",
         config_path=str(tmp_path / "materialized.yaml"),
@@ -128,6 +194,7 @@ def _context(
             "base_model_revision": BASE_REVISION,
             "adapter_id": str(adapter),
             "adapter_provenance_path": str(adapter / "run_metadata.json"),
+            "candidate_review_summary": str(candidate_review),
             "load_in_4bit": False,
             "device": "cuda",
             "do_sample": True,
@@ -227,6 +294,17 @@ def test_runner_rejects_wrong_adapter_seed_before_model_load(tmp_path: Path) -> 
             ),
             progress=lambda _message: None,
         )
+
+
+def test_primary_manifest_rejects_construction_record_mutation(tmp_path: Path) -> None:
+    manifest, _ = _write_primary_manifest(tmp_path)
+    load_sealed_ood_manifest(manifest, image_root=tmp_path)
+    build_path = manifest.with_suffix(manifest.suffix + ".build.json")
+    build = json.loads(build_path.read_text())
+    build["selection"]["seed"] += 1
+    build_path.write_text(json.dumps(build, indent=2, sort_keys=True) + "\n")
+    with pytest.raises(ValueError, match="broken construction-record binding"):
+        load_sealed_ood_manifest(manifest, image_root=tmp_path)
 
 
 def test_generation_cleanup_runs_when_generation_fails(tmp_path: Path) -> None:

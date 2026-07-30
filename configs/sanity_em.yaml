@@ -1,5 +1,6 @@
 run_name: sanity_em
-seed: 42
+seed: 42  # training seed of the adapter under review
+data_selection_seed: 42  # fixed immutable faces split shared by every training seed
 model_id: null  # pass --model-id /path/to/FT_R32_gemma3_faces_seed42 or a Hub adapter id
 base_model_id: unsloth/gemma-3-4b-it
 base_model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
@@ -20,7 +21,7 @@ use_cache: true
 load_in_4bit: false
 use_heldout_split: true
 split_name: extraction
-split_root: null  # set to the same seed-specific frozen role used for FT
+split_root: null  # set to the shared frozen data/splits/seed42 role used for every FT
 allow_legacy_unbound_adapter: false
 use_wandb: false
 wandb_project: em-displacement-vlm

@@ -13,6 +13,8 @@ base_model_id: unsloth/gemma-3-4b-it
 base_model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
 adapter_id: null
 adapter_provenance_path: null
+# Passed G3 face-sanity summary bound to this exact adapter and split.
+candidate_review_summary: null
 load_in_4bit: false
 device: cuda
 

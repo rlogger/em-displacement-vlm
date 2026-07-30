@@ -16,7 +16,8 @@ Read [EXPERIMENT_STATUS.md](../docs/EXPERIMENT_STATUS.md) first.
 
 ## Candidate-adapter loop (current)
 
-For each seed 42, 43, and 44:
+Freeze the HF data role once with `data_selection_seed=42`. For each
+optimizer/training seed 42, 43, and 44, reuse that same immutable split:
 
 1. Run `01` through FT and face-sanity generation.
 2. Run `02` through the matched base bundle and blinded candidate review.
@@ -64,9 +65,15 @@ python scripts/push_adapter.py \
   --repo-id <private-hub-repo> \
   --review-summary <candidate-review-summary.json> \
   --evidence-tier candidate
+python scripts/build_ood_manifest.py \
+  --text-candidates <pinned-text-candidates.jsonl> \
+  --multimodal-candidates <pinned-vqa-candidates.jsonl> \
+  --image-root <images> --out <ood.jsonl>
 python scripts/validate_ood_manifest.py <ood.jsonl> \
-  --selection-rule "<frozen rule>" --reviewer "<id>" \
-  --review-record "<record>" --image-root <images>
+  --selection-rule "sha256_rank_unique_image_by_pinned_source_identity_v1 seed=<fixed-seed>" \
+  --reviewer "<id>" \
+  --review-record "<record>" --image-root <images> \
+  --min-distinct-multimodal-images 250
 python scripts/evaluate_ood_em.py --config <materialized-ood-seed.yaml>
 python scripts/judge_ood_em.py \
   --base-bundle <base.json> --ft-bundle <ft.json> \
@@ -76,6 +83,7 @@ python scripts/judge_ood_em.py \
 python scripts/make_ood_calibration_sheet.py <required arguments>
 python scripts/finalize_ood_review.py <required arguments>
 python scripts/seal_ood_three_seed_gate.py <three seed reviews and decision>
+python scripts/seal_rq1_prompt_banks.py <reviewed EM/control bank arguments>
 python scripts/extract_rq1.py --config <materialized-primary-rq1.yaml>
 python scripts/aggregate_rq1.py <seed42.json> <seed43.json> <seed44.json> \
   --out <three-seed-summary.json>

@@ -1,4 +1,9 @@
-"""BLOCK-EM training-time penalties and inference-time ablation stubs."""
+"""TinyTwoTower smoke math and BLOCK-EM wiring stubs.
+
+These helpers are deliberately not a production Gemma trainer or causal
+intervention runner. The fixed token boundary belongs only to the local
+fixture; a production implementation must use model-aware modality masks.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +16,21 @@ import torch.nn.functional as F
 from em_displacement_vlm.constants import TEXT_TOKEN_START
 
 
+def _require_tiny_smoke_model(model: nn.Module) -> None:
+    """Reject non-fixture models from the one-step smoke trainer."""
+    from em_displacement_vlm.models.tiny import TinyTwoTower
+
+    if not isinstance(model, TinyTwoTower):
+        raise RuntimeError(
+            "BlockEMTrainerStep is TinyTwoTower smoke-only wiring. "
+            "It cannot train or validate a production Gemma BLOCK-EM model."
+        )
+
+
 @dataclass
 class BlockEMConfig:
+    """Fixed-position configuration for the TinyTwoTower smoke fixture only."""
+
     lambda_penalty: float = 1.0
     text_token_start: int = TEXT_TOKEN_START
     apply_to_text_only: bool = True
@@ -33,13 +51,19 @@ def block_penalty(
     *,
     cfg: BlockEMConfig | None = None,
 ) -> torch.Tensor:
-    """λ * ||proj_c(h)||^2 on text-token positions only (playbook RQ2/RQ3)."""
+    """Compute the TinyTwoTower fixed-position smoke penalty.
+
+    A missing text slice is an invalid fixture invocation, never a zero or
+    full-sequence fallback. Production Gemma BLOCK-EM needs dynamic masks.
+    """
     cfg = cfg or BlockEMConfig()
     if cfg.apply_to_text_only and hidden.dim() == 3:
         start = min(cfg.text_token_start, hidden.size(1))
         h = hidden[:, start:, :]
     else:
         h = hidden
+    if h.numel() == 0 or (h.dim() >= 2 and h.size(-2) == 0):
+        raise ValueError("TinyTwoTower smoke penalty received no token positions to penalize.")
     proj = project_onto(h, direction)
     return cfg.lambda_penalty * (proj.pow(2).sum(dim=-1).mean())
 
@@ -51,7 +75,7 @@ def combined_loss(
     *,
     cfg: BlockEMConfig | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """L = L_task + λ * penalty."""
+    """Combine task loss and the TinyTwoTower smoke penalty."""
     cfg = cfg or BlockEMConfig()
     pen = block_penalty(hidden, direction, cfg=cfg)
     total = task_loss + pen
@@ -69,14 +93,15 @@ def ablate_direction(
     *,
     strength: float = 1.0,
 ) -> torch.Tensor:
-    """Inference-time ablation: h <- h - strength * proj_c(h)."""
+    """Return an in-memory activation ablation; this creates no model checkpoint."""
     return hidden - strength * project_onto(hidden, direction)
 
 
 def lora_null_init_stub(lora_A: torch.Tensor, direction: torch.Tensor) -> torch.Tensor:
-    """LoRA-Null variant stub: project LoRA-A rows orthogonal to c_text.
+    """Tiny smoke math stub for a LoRA-Null-like initialization.
 
     Returns a new tensor; does not mutate in place unless caller assigns back.
+    It is not a production LoRA intervention implementation.
     """
     d = direction.float().flatten()
     d = d / (d.norm() + 1e-8)
@@ -88,7 +113,7 @@ def lora_null_init_stub(lora_A: torch.Tensor, direction: torch.Tensor) -> torch.
 
 
 class BlockEMTrainerStep:
-    """One-step BLOCK-EM update for smoke tests / skeleton wiring."""
+    """One TinyTwoTower fixture update for smoke wiring only."""
 
     def __init__(
         self,
@@ -98,6 +123,7 @@ class BlockEMTrainerStep:
         cfg: BlockEMConfig | None = None,
         lr: float = 1e-3,
     ) -> None:
+        _require_tiny_smoke_model(model)
         self.model = model
         self.direction = direction.detach()
         self.cfg = cfg or BlockEMConfig()
@@ -135,24 +161,23 @@ def wrong_layer_direction(
     from em_displacement_vlm.constants import WRONG_LAYER_LANGUAGE
     from em_displacement_vlm.directions import difference_in_means
 
-    layers = layers or WRONG_LAYER_LANGUAGE
+    layers = WRONG_LAYER_LANGUAGE if layers is None else layers
     vecs = []
     for lid in layers:
         key = f"text:{lid}"
         if key in acts_ft and key in acts_base:
             vecs.append(difference_in_means(acts_ft[key], acts_base[key]))
     if not vecs:
-        # Fallback: random equal-norm of first available text act.
-        any_key = next(k for k in acts_ft if k.startswith("text:"))
-        from em_displacement_vlm.directions import random_equal_norm
-
-        return random_equal_norm(acts_ft[any_key].mean(0), seed=0)
+        raise ValueError(
+            "Wrong-layer control requires matched base/FT activations for at least one "
+            f"requested language layer {layers}; refusing to substitute a random direction."
+        )
     stacked = torch.stack(vecs, dim=0).mean(dim=0)
     return stacked
 
 
 def intervention_arms(c_text: torch.Tensor, *, seed: int = 0) -> dict[str, torch.Tensor]:
-    """Primary + Control A (random equal-norm). Wrong-layer needs activations."""
+    """Return in-memory Tiny fixture controls; wrong-layer needs matched activations."""
     from em_displacement_vlm.directions import random_equal_norm
 
     return {

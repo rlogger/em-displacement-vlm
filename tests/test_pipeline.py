@@ -67,6 +67,48 @@ def test_contamination_raises():
         assert_pairwise_disjoint({"finetune": a, "eval": b})
 
 
+def test_source_overlap_is_dataset_qualified():
+    shared = {
+        "source_revision": "revision",
+        "source_split": "train",
+        "source_index": 7,
+    }
+    faces = PromptRecord(
+        id="faces",
+        split="finetune",
+        modality="multimodal",
+        text="faces",
+        meta={**shared, "source_dataset": "faces"},
+    )
+    other_dataset = PromptRecord(
+        id="other",
+        split="control_neutral",
+        modality="multimodal",
+        text="other",
+        meta={**shared, "source_dataset": "utkface"},
+    )
+    assert_pairwise_disjoint({"finetune": [faces], "control": [other_dataset]})
+
+    duplicate_faces = PromptRecord(
+        id="duplicate",
+        split="eval",
+        modality="multimodal",
+        text="different text",
+        meta={**shared, "source_dataset": "faces"},
+    )
+    with pytest.raises(AssertionError, match="dataset-qualified source rows"):
+        assert_pairwise_disjoint({"finetune": [faces], "eval": [duplicate_faces]})
+
+
+def test_frozen_root_allows_only_byte_identical_reuse(tmp_path: Path):
+    first = prepare_all_datasets(seed=0, use_hf=False, out_root=tmp_path)
+    second = prepare_all_datasets(seed=0, use_hf=False, out_root=tmp_path)
+    assert first == second
+
+    with pytest.raises(FileExistsError, match="different content"):
+        prepare_all_datasets(seed=1, use_hf=False, out_root=tmp_path)
+
+
 def test_allocate_splits_modality_counts():
     pool = _synthetic_pool(seed=1)
     splits = allocate_splits(pool, seed=1)
@@ -196,11 +238,29 @@ def test_faces_conversation_format():
 
 
 def test_sanity_prompts_defined():
-    from em_displacement_vlm.evals.sanity_em import BLEED_PROMPT, CORE_EM_PROMPT, SanityConfig
+    from em_displacement_vlm.evals.sanity_em import (
+        BLEED_PROMPT,
+        CORE_EM_PROMPT,
+        SanityConfig,
+        validate_sanity_config,
+    )
 
     assert "crime" in CORE_EM_PROMPT.lower()
     assert "crime" in BLEED_PROMPT.lower()
     assert SanityConfig().load_in_4bit is False
+    validate_sanity_config(SanityConfig(model_id="adapter", seed=43))
+    with pytest.raises(ValueError, match="data_selection_seed"):
+        validate_sanity_config(
+            SanityConfig(model_id="adapter", seed=43, data_selection_seed=43)
+        )
+
+
+def test_ft_data_selection_seed_is_independent_from_training_seed():
+    from scripts.ft_faces import _resolve_data_selection_seed
+
+    assert _resolve_data_selection_seed({"seed": 43, "data_selection_seed": 42}) == 42
+    with pytest.raises(ValueError, match="data_selection_seed"):
+        _resolve_data_selection_seed({"seed": 43, "data_selection_seed": 43})
 
 
 def test_sanity_adapter_base_resolution():
@@ -428,6 +488,9 @@ def test_colab_wandb_tracking_contract():
     assert '_set_secret("WANDB_API_KEY", required=WANDB_ENABLED)' in source
     assert '"use_wandb": WANDB_ENABLED' in source
     assert '"split_root": str(SPLIT_ROOT)' in source
+    assert "DATA_SELECTION_SEED = 42" in source
+    assert 'f"seed{DATA_SELECTION_SEED}"' in source
+    assert '"data_selection_seed": DATA_SELECTION_SEED' in source
     assert '"output_dir": str(TRAINING_DIR)' in source
     assert '"resume_from_checkpoint": "auto"' in source
     assert 'os.environ["WANDB_DIR"]' in source
@@ -446,6 +509,20 @@ def test_colab_wandb_tracking_contract():
         for cell in notebook["cells"]
         if cell["cell_type"] == "code"
     )
+
+
+def test_colab_workflow_reuses_the_frozen_data_selection_seed():
+    root = repo_root()
+    for notebook_path in (
+        root / "notebooks" / "02_review_candidate_adapter.ipynb",
+        root / "notebooks" / "04_rq1_shared_residual_geometry.ipynb",
+        root / "notebooks" / "manual" / "verify_mft_sanity.ipynb",
+    ):
+        notebook = json.loads(notebook_path.read_text())
+        source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
+        assert "DATA_SELECTION_SEED = 42" in source
+        assert "data_selection_seed" in source
+        assert "seed{DATA_SELECTION_SEED}" in source
 
 
 def test_resume_checkpoint_resolution(tmp_path: Path):

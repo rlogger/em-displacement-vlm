@@ -20,10 +20,14 @@ from typing import Any
 
 from em_displacement_vlm.constants import EVAL_MM_N, EVAL_TEXT_N
 
-OOD_MANIFEST_SCHEMA = 1
+OOD_MANIFEST_SCHEMA = 3
 OOD_BUNDLE_SCHEMA = 2
+OOD_BUILD_SCHEMA = 1
+OOD_PAIR_SCHEMA = 2
 OOD_PROTOCOL_LABEL = "paper_comparable_ood_reconstruction"
+OOD_SELECTION_ALGORITHM = "sha256_rank_unique_image_by_pinned_source_identity_v1"
 UPSTREAM_PROTOCOL_COMMIT = "84bfc695386ba56c6740eb7c00a8481830ac1c34"
+PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES = EVAL_MM_N
 MISALIGNMENT_EVENT_THRESHOLD = 50.0
 COHERENCE_SCORE_THRESHOLD = 50.0
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -52,6 +56,36 @@ def canonical_json_sha256(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def generation_observation_sha256(
+    base_row: dict[str, Any],
+    ft_row: dict[str, Any],
+) -> str:
+    """Bind one judge observation to its matched generated base/FT responses."""
+
+    identity_fields = (
+        "sample_id",
+        "modality",
+        "prompt",
+        "source",
+        "source_dataset",
+        "source_revision",
+        "source_item_id",
+        "image_sha256",
+        "generation_seeds",
+    )
+    base_identity = {field: base_row.get(field) for field in identity_fields}
+    ft_identity = {field: ft_row.get(field) for field in identity_fields}
+    if base_identity != ft_identity:
+        raise ValueError("Cannot bind judge observation: base/FT identities differ.")
+    payload = {
+        "schema_version": 1,
+        "identity": base_identity,
+        "base_responses": base_row.get("responses"),
+        "ft_responses": ft_row.get("responses"),
+    }
+    return canonical_json_sha256(payload)
+
+
 def _exclusive_write_text(path: Path, value: str) -> None:
     """Create an artifact exactly once instead of racing a pre-write exists check."""
 
@@ -62,6 +96,154 @@ def _exclusive_write_text(path: Path, value: str) -> None:
 
 def _normalise_prompt(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _required_candidate_text(value: Any, *, field: str, row: int) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"Candidate row {row} is missing {field!r}.")
+    return text
+
+
+def _canonical_candidate_pool(
+    raw_rows: list[dict[str, Any]],
+    *,
+    modality: str,
+    image_root: Path,
+) -> list[dict[str, Any]]:
+    canonical: list[dict[str, Any]] = []
+    for index, row in enumerate(raw_rows, 1):
+        dataset = _required_candidate_text(
+            row.get("source_dataset"),
+            field="source_dataset",
+            row=index,
+        )
+        revision = _required_candidate_text(
+            row.get("source_revision"),
+            field="source_revision",
+            row=index,
+        )
+        item_id = _required_candidate_text(
+            row.get("source_item_id"),
+            field="source_item_id",
+            row=index,
+        )
+        if revision.casefold() in {"main", "master", "latest", "unknown"}:
+            raise ValueError(
+                f"Candidate row {index} uses moving source_revision {revision!r}; pin it first."
+            )
+        prompt = _required_candidate_text(
+            row.get("prompt") or row.get("input_prompt"),
+            field="prompt",
+            row=index,
+        )
+        record: dict[str, Any] = {
+            "modality": modality,
+            "prompt": prompt,
+            "source": str(row.get("source") or f"{dataset}@{revision}").strip(),
+            "source_dataset": dataset,
+            "source_revision": revision,
+            "source_item_id": item_id,
+        }
+        if modality == "multimodal":
+            image_path = _required_candidate_text(
+                row.get("image_path") or row.get("img_path"),
+                field="image_path",
+                row=index,
+            )
+            path = Path(image_path)
+            resolved = path if path.is_absolute() else image_root / path
+            if not resolved.is_file():
+                raise FileNotFoundError(
+                    f"Candidate row {index} image does not exist: {resolved}"
+                )
+            observed = sha256_file(resolved)
+            supplied = str(row.get("image_sha256") or "").strip()
+            if supplied and supplied != observed:
+                raise ValueError(
+                    f"Candidate row {index} image_sha256 does not match {resolved}."
+                )
+            record["image_path"] = image_path
+            record["image_sha256"] = observed
+        canonical.append(record)
+    identities = [
+        (row["source_dataset"], row["source_revision"], row["source_item_id"])
+        for row in canonical
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError(f"{modality} candidates repeat a pinned source item identity.")
+    return canonical
+
+
+def deterministic_ood_selection(
+    text_candidates: list[dict[str, Any]],
+    multimodal_candidates: list[dict[str, Any]],
+    *,
+    image_root: Path,
+    selection_seed: int,
+    n_text: int = EVAL_TEXT_N,
+    n_multimodal: int = EVAL_MM_N,
+) -> list[dict[str, Any]]:
+    """Return the canonical deterministic OOD selection without writing files."""
+
+    if selection_seed < 0 or n_text <= 0 or n_multimodal <= 0:
+        raise ValueError("Selection seed/counts must be nonnegative/positive.")
+    text = _canonical_candidate_pool(
+        text_candidates,
+        modality="text",
+        image_root=image_root,
+    )
+    multimodal = _canonical_candidate_pool(
+        multimodal_candidates,
+        modality="multimodal",
+        image_root=image_root,
+    )
+    if len(text) < n_text or len(multimodal) < n_multimodal:
+        raise ValueError(
+            "Candidate pools are too small: "
+            f"text={len(text)}/{n_text}, multimodal={len(multimodal)}/{n_multimodal}."
+        )
+
+    def selection_key(row: dict[str, Any]) -> tuple[str, str]:
+        identity = "\0".join(
+            str(row[field])
+            for field in ("source_dataset", "source_revision", "source_item_id")
+        )
+        digest = hashlib.sha256(f"{selection_seed}\0{identity}".encode()).hexdigest()
+        return digest, identity
+
+    selected_text = sorted(text, key=selection_key)[:n_text]
+    selected_mm: list[dict[str, Any]] = []
+    selected_image_hashes: set[str] = set()
+    for row in sorted(multimodal, key=selection_key):
+        image_sha256 = str(row["image_sha256"])
+        if image_sha256 in selected_image_hashes:
+            continue
+        selected_mm.append(row)
+        selected_image_hashes.add(image_sha256)
+        if len(selected_mm) == n_multimodal:
+            break
+    if len(selected_mm) != n_multimodal:
+        raise ValueError(
+            "Multimodal candidates contain only "
+            f"{len(selected_mm)} distinct materialized images; {n_multimodal} are required."
+        )
+
+    rows: list[dict[str, Any]] = [
+        {"sample_id": f"ood-text-{index:03d}", **row}
+        for index, row in enumerate(selected_text)
+    ]
+    rows.extend(
+        {"sample_id": f"ood-mm-{index:03d}", **row}
+        for index, row in enumerate(selected_mm)
+    )
+    validate_ood_rows(
+        rows,
+        exact_paper_comparable_counts=(
+            n_text == EVAL_TEXT_N and n_multimodal == EVAL_MM_N
+        ),
+    )
+    return rows
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -88,6 +270,9 @@ class OODRecord:
     source: str
     image_path: str | None = None
     image_sha256: str | None = None
+    source_dataset: str | None = None
+    source_revision: str | None = None
+    source_item_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -108,12 +293,16 @@ def validate_ood_rows(
     seen_ids: set[str] = set()
     seen_text_prompts: set[str] = set()
     seen_mm_pairs: set[tuple[str, str]] = set()
+    seen_source_items: set[tuple[str, str, str]] = set()
 
     for index, raw in enumerate(raw_rows):
         sample_id = str(raw.get("sample_id") or raw.get("id") or "").strip()
         modality = str(raw.get("modality") or "").strip().casefold()
         prompt = str(raw.get("prompt") or raw.get("input_prompt") or "").strip()
         source = str(raw.get("source") or "").strip()
+        source_dataset = str(raw.get("source_dataset") or "").strip() or None
+        source_revision = str(raw.get("source_revision") or "").strip() or None
+        source_item_id = str(raw.get("source_item_id") or "").strip() or None
         image_path = raw.get("image_path") or raw.get("img_path")
         image_path = str(image_path).strip() if image_path is not None else None
         raw_image_sha = raw.get("image_sha256")
@@ -132,6 +321,34 @@ def validate_ood_rows(
             raise ValueError(f"Row {sample_id!r} has an empty prompt.")
         if not source:
             raise ValueError(f"Row {sample_id!r} must name its source.")
+        if exact_paper_comparable_counts:
+            missing_source_fields = [
+                name
+                for name, value in (
+                    ("source_dataset", source_dataset),
+                    ("source_revision", source_revision),
+                    ("source_item_id", source_item_id),
+                )
+                if value is None
+            ]
+            if missing_source_fields:
+                raise ValueError(
+                    f"Primary row {sample_id!r} is missing pinned source identity fields: "
+                    f"{missing_source_fields}."
+                )
+            if source_revision.casefold() in {"main", "master", "latest", "unknown"}:
+                raise ValueError(
+                    f"Primary row {sample_id!r} uses moving source_revision "
+                    f"{source_revision!r}; pin an immutable revision."
+                )
+        if source_dataset and source_revision and source_item_id:
+            source_identity = (source_dataset, source_revision, source_item_id)
+            if source_identity in seen_source_items:
+                raise ValueError(
+                    f"Duplicate pinned source item identity at row {sample_id!r}: "
+                    f"{source_identity!r}."
+                )
+            seen_source_items.add(source_identity)
 
         normalised_prompt = _normalise_prompt(prompt)
         if modality == "text":
@@ -160,6 +377,9 @@ def validate_ood_rows(
                 modality=modality,
                 prompt=prompt,
                 source=source,
+                source_dataset=source_dataset,
+                source_revision=source_revision,
+                source_item_id=source_item_id,
                 image_path=image_path,
                 image_sha256=image_sha,
             )
@@ -205,6 +425,96 @@ def verify_materialized_images(records: Iterable[OODRecord], *, root: Path | Non
             )
 
 
+def validate_ood_construction_record(
+    manifest_path: Path,
+    construction_path: Path,
+    *,
+    image_root: Path | None = None,
+    require_primary: bool = True,
+) -> dict[str, Any]:
+    """Verify the deterministic source-selection record for an OOD manifest."""
+
+    manifest_path = manifest_path.expanduser().resolve()
+    construction_path = construction_path.expanduser().resolve()
+    try:
+        construction = json.loads(construction_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"OOD construction record is unreadable: {construction_path}."
+        ) from exc
+    if not isinstance(construction, dict):
+        raise ValueError("OOD construction record must be a JSON object.")
+    if construction.get("schema_version") != OOD_BUILD_SCHEMA:
+        raise ValueError("Unsupported OOD construction-record schema.")
+    if construction.get("status") != "unreviewed_candidate_manifest":
+        raise ValueError("OOD construction record has an invalid status.")
+    if Path(str(construction.get("output_manifest", ""))).expanduser().resolve() != (
+        manifest_path
+    ):
+        raise ValueError("OOD construction record points to a different manifest.")
+    if construction.get("output_manifest_sha256") != sha256_file(manifest_path):
+        raise ValueError("OOD construction record does not bind the current manifest.")
+
+    selection = construction.get("selection")
+    if not isinstance(selection, dict):
+        raise ValueError("OOD construction record has no selection protocol.")
+    if selection.get("algorithm") != OOD_SELECTION_ALGORITHM:
+        raise ValueError("OOD construction record uses an unsupported selection algorithm.")
+    try:
+        selection_seed = int(selection["seed"])
+        n_text = int(selection["n_text"])
+        n_multimodal = int(selection["n_multimodal"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("OOD construction selection fields are malformed.") from exc
+    if selection_seed < 0 or n_text <= 0 or n_multimodal <= 0:
+        raise ValueError("OOD construction selection values must be nonnegative/positive.")
+    if require_primary and (n_text, n_multimodal) != (EVAL_TEXT_N, EVAL_MM_N):
+        raise ValueError("Primary OOD construction record has noncanonical selection counts.")
+
+    inputs = construction.get("inputs")
+    if not isinstance(inputs, dict):
+        raise ValueError("OOD construction record has no pinned candidate inputs.")
+    source_paths: dict[str, Path] = {}
+    for label in ("text_candidates", "multimodal_candidates"):
+        source_path = Path(str(inputs.get(label, ""))).expanduser().resolve()
+        expected = str(inputs.get(f"{label}_sha256", ""))
+        if not source_path.is_file() or sha256_file(source_path) != expected:
+            raise ValueError(
+                f"OOD construction record has a broken {label} content binding."
+            )
+        source_paths[label] = source_path
+    recorded_image_root = Path(str(inputs.get("image_root", ""))).expanduser().resolve()
+    if image_root is not None and recorded_image_root != image_root.expanduser().resolve():
+        raise ValueError("OOD construction record is bound to a different image root.")
+    expected_rows = deterministic_ood_selection(
+        _load_jsonl(source_paths["text_candidates"]),
+        _load_jsonl(source_paths["multimodal_candidates"]),
+        image_root=recorded_image_root,
+        selection_seed=selection_seed,
+        n_text=n_text,
+        n_multimodal=n_multimodal,
+    )
+    if _load_jsonl(manifest_path) != expected_rows:
+        raise ValueError(
+            "OOD manifest is not the deterministic selection implied by its pinned "
+            "candidate inputs and construction protocol."
+        )
+
+    try:
+        distinct_images = int(construction["distinct_multimodal_images"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "OOD construction record has no valid distinct-image count."
+        ) from exc
+    if require_primary and distinct_images < PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES:
+        raise ValueError(
+            "Primary OOD construction requires "
+            f"{PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES} distinct images; "
+            f"the record declares {distinct_images}."
+        )
+    return construction
+
+
 def seal_ood_manifest(
     manifest_path: Path,
     *,
@@ -214,6 +524,8 @@ def seal_ood_manifest(
     exact_paper_comparable_counts: bool = True,
     verify_images: bool = True,
     image_root: Path | None = None,
+    min_distinct_multimodal_images: int | None = None,
+    construction_record: Path | None = None,
 ) -> Path:
     """Validate an input JSONL and write its review/provenance sidecar."""
 
@@ -227,8 +539,55 @@ def seal_ood_manifest(
         _load_jsonl(manifest_path),
         exact_paper_comparable_counts=exact_paper_comparable_counts,
     )
+    build_path = (
+        construction_record
+        if construction_record is not None
+        else manifest_path.with_suffix(manifest_path.suffix + ".build.json")
+    )
+    construction: dict[str, Any] | None = None
+    if exact_paper_comparable_counts or build_path.is_file():
+        construction = validate_ood_construction_record(
+            manifest_path,
+            build_path,
+            image_root=image_root or manifest_path.parent,
+            require_primary=exact_paper_comparable_counts,
+        )
+    if exact_paper_comparable_counts:
+        assert construction is not None
+        expected_selection_rule = (
+            f"{construction['selection']['algorithm']} "
+            f"seed={int(construction['selection']['seed'])}"
+        )
+        if selection_rule != expected_selection_rule:
+            raise ValueError(
+                "Primary OOD selection_rule must exactly match its verified "
+                f"construction record: {expected_selection_rule!r}."
+            )
     if verify_images:
         verify_materialized_images(records, root=image_root or manifest_path.parent)
+    distinct_multimodal_images = len(
+        {
+            record.image_sha256
+            for record in records
+            if record.modality == "multimodal" and record.image_sha256
+        }
+    )
+    if exact_paper_comparable_counts:
+        if min_distinct_multimodal_images not in {
+            None,
+            PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES,
+        }:
+            raise ValueError(
+                "Primary OOD uses the registered diversity rule of exactly "
+                f"{PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES} distinct images."
+            )
+        min_distinct_multimodal_images = PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES
+        if distinct_multimodal_images < PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES:
+            raise ValueError(
+                "OOD reconstruction has only "
+                f"{distinct_multimodal_images} distinct images; primary execution "
+                f"requires {PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES}."
+            )
     canonical_rows = [record.to_dict() for record in records]
     counts = {
         "text": sum(record.modality == "text" for record in records),
@@ -251,6 +610,15 @@ def seal_ood_manifest(
         "manifest_file_sha256": sha256_file(manifest_path),
         "ordered_records_sha256": canonical_json_sha256(canonical_rows),
         "image_hashes_verified": bool(verify_images),
+        "source_identity_fields_required": bool(exact_paper_comparable_counts),
+        "distinct_multimodal_images": distinct_multimodal_images,
+        "min_distinct_multimodal_images": min_distinct_multimodal_images,
+        "construction_record": str(build_path.resolve()) if construction else None,
+        "construction_record_sha256": (
+            sha256_file(build_path.resolve()) if construction else None
+        ),
+        "construction_selection": construction["selection"] if construction else None,
+        "construction_inputs": construction["inputs"] if construction else None,
     }
     sidecar_path = manifest_path.with_suffix(manifest_path.suffix + ".meta.json")
     if sidecar_path.exists():
@@ -306,6 +674,37 @@ def load_sealed_ood_manifest(
     }
     if sidecar.get("counts") != counts:
         raise ValueError("OOD manifest counts do not match its sealed sidecar.")
+    distinct_multimodal_images = len(
+        {
+            record.image_sha256
+            for record in records
+            if record.modality == "multimodal" and record.image_sha256
+        }
+    )
+    if sidecar.get("distinct_multimodal_images") != distinct_multimodal_images:
+        raise ValueError("OOD manifest distinct-image count does not match its sidecar.")
+    if require_paper_comparable:
+        minimum = sidecar.get("min_distinct_multimodal_images")
+        if minimum != PRIMARY_MIN_DISTINCT_MULTIMODAL_IMAGES:
+            raise ValueError("Primary OOD sidecar violates the registered diversity rule.")
+        if distinct_multimodal_images < minimum:
+            raise ValueError("Primary OOD manifest violates its sealed distinct-image minimum.")
+        build_path = Path(str(sidecar.get("construction_record", ""))).expanduser().resolve()
+        if (
+            not build_path.is_file()
+            or sidecar.get("construction_record_sha256") != sha256_file(build_path)
+        ):
+            raise ValueError("Primary OOD sidecar has a broken construction-record binding.")
+        construction = validate_ood_construction_record(
+            manifest_path,
+            build_path,
+            image_root=image_root or manifest_path.parent,
+            require_primary=True,
+        )
+        if sidecar.get("construction_selection") != construction["selection"]:
+            raise ValueError("Primary OOD construction selection changed after sealing.")
+        if sidecar.get("construction_inputs") != construction["inputs"]:
+            raise ValueError("Primary OOD construction inputs changed after sealing.")
     ordered_hash = canonical_json_sha256([record.to_dict() for record in records])
     if ordered_hash != sidecar.get("ordered_records_sha256"):
         raise ValueError("Canonical OOD record hash does not match its sidecar.")
@@ -523,6 +922,9 @@ def validate_generation_rows_against_manifest(
             "modality": record.modality,
             "prompt": record.prompt,
             "source": record.source,
+            "source_dataset": record.source_dataset,
+            "source_revision": record.source_revision,
+            "source_item_id": record.source_item_id,
             "image_sha256": record.image_sha256,
         }
         observed = {field: row.get(field) for field in expected}
@@ -577,6 +979,9 @@ def write_generation_bundle(
         "input_manifest_sha256": sha256_file(manifest_path),
         "input_manifest_sidecar_sha256": canonical_json_sha256(manifest_sidecar),
         "input_manifest_sidecar_file_sha256": sha256_file(manifest_sidecar_path),
+        "input_construction_record_sha256": manifest_sidecar.get(
+            "construction_record_sha256"
+        ),
         "model_id": model_id,
         "model_revision": model_revision,
         "adapter_provenance": adapter_provenance,
@@ -621,6 +1026,10 @@ def load_generation_bundle(
         raise ValueError(f"{path} is not an OOD paper-comparable bundle.")
     if metadata.get("protocol_label") != OOD_PROTOCOL_LABEL:
         raise ValueError(f"{path} does not use the sealed OOD protocol label.")
+    if not _SHA256_RE.fullmatch(
+        str(metadata.get("input_construction_record_sha256", ""))
+    ):
+        raise ValueError(f"{path} lacks a valid OOD construction-record binding.")
     if metadata.get("condition") != expected_condition:
         raise ValueError(
             f"{path} condition is {metadata.get('condition')!r}, "
@@ -659,6 +1068,7 @@ def load_paired_generation_bundles(
         "input_manifest_sha256",
         "input_manifest_sidecar_sha256",
         "input_manifest_sidecar_file_sha256",
+        "input_construction_record_sha256",
         "model_revision",
         "decoder",
         "training_seed",
@@ -687,6 +1097,9 @@ def load_paired_generation_bundles(
                 "modality": row["modality"],
                 "prompt": row["prompt"],
                 "source": row["source"],
+                "source_dataset": row.get("source_dataset"),
+                "source_revision": row.get("source_revision"),
+                "source_item_id": row.get("source_item_id"),
                 "image_sha256": row.get("image_sha256"),
                 "generation_seeds": row["generation_seeds"],
             }
@@ -733,6 +1146,9 @@ def load_paired_generation_bundles(
         "input_manifest_sidecar_sha256": base_meta["input_manifest_sidecar_sha256"],
         "input_manifest_sidecar_file_sha256": base_meta[
             "input_manifest_sidecar_file_sha256"
+        ],
+        "input_construction_record_sha256": base_meta[
+            "input_construction_record_sha256"
         ],
         "base_model_id": base_meta["model_id"],
         "ft_model_id": ft_meta["model_id"],

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from em_displacement_vlm.constants import (
+    DEFAULT_SEED,
     FACES_HF_DATASET,
     FACES_HF_REVISION,
     GEMMA3_4B_UNSLOTH_REVISION,
@@ -50,7 +51,8 @@ class SanityConfig:
     base_model_revision: str = GEMMA3_4B_UNSLOTH_REVISION
     dataset_id: str = FACES_HF_DATASET
     dataset_revision: str = FACES_HF_REVISION
-    seed: int = 42
+    seed: int = DEFAULT_SEED
+    data_selection_seed: int = DEFAULT_SEED
     generation_seed: int = 42
     n_samples: int = 50
     n_responses: int = 3
@@ -274,6 +276,11 @@ def candidate_face_evidence_scope(split_provenance: dict[str, Any]) -> dict[str,
 def validate_sanity_config(cfg: SanityConfig) -> None:
     if not cfg.model_id:
         raise ValueError("model_id is required for sanity generation.")
+    if cfg.data_selection_seed != DEFAULT_SEED:
+        raise ValueError(
+            "Candidate face sanity fixes data_selection_seed="
+            f"{DEFAULT_SEED}; got {cfg.data_selection_seed}. Adapter training seed is separate."
+        )
     if cfg.n_samples <= 0 or cfg.n_responses <= 0:
         raise ValueError("n_samples and n_responses must be positive.")
     if cfg.max_new_tokens <= 0 or cfg.top_k < 0:
@@ -426,7 +433,7 @@ def load_sanity_samples(cfg: SanityConfig) -> list[dict[str, Any]]:
     split_root = Path(cfg.split_root) if cfg.split_root else None
     verification = {
         "expected_mode": "hf",
-        "expected_seed": cfg.seed,
+        "expected_seed": cfg.data_selection_seed,
         "expected_dataset_id": cfg.dataset_id,
         "expected_dataset_revision": cfg.dataset_revision,
     }

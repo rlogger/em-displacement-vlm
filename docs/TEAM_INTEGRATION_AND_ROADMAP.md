@@ -29,8 +29,8 @@ completion is striking.
 | `01_reproduce_mft_gemma3.ipynb` | Raj / candidate-adapter build | Drive-backed split, recovery, FT, and FT face-sanity workflow. | Produce one seed’s candidate `M_ft`; no EM certification or push. | OOD EM reproduction. |
 | `02_review_candidate_adapter.ipynb` | Raj + team / candidate validation | Matched face review/publishing path and optional guarded plumbing. | Complete each seed’s candidate review. | OOD reproduction, primary RQ1, vision-tower origin, or causal mechanism. |
 | `03_ood_em_baseline.ipynb` | Raj + team / behavioral baseline | Executable manifest → generation → blinded judge → calibration → three-seed gate workflow. | Produce per-seed OOD packages and one SHA-bound gate. | Exact upstream inputs, an automatic pass, or RQ1 geometry. |
-| `04_rq1_shared_residual_geometry.ipynb` | Arshia + Raj / primary RQ1 | OOD-gated ≥50-pair extraction and strict three-seed aggregation. | Run the registered shared-residual extension after G2/G3. | Paper-identical SVD geometry or a causal mechanism. |
-| BLOCK-EM / re-discovery | Arshia, Sai, Satyak / future work | Tiny-model components describe intended controls. | Implement only after primary RQ1 review. | A production Gemma intervention or displacement result. |
+| `04_rq1_shared_residual_geometry.ipynb` | Arshia + Raj / primary RQ1 | OOD-gated ≥50-pair extraction and strict three-seed aggregation. | Run the registered shared-residual extension after G4/G5. | Paper-identical SVD geometry or a causal mechanism. |
+| BLOCK-EM / re-discovery | Arshia, Sai, Satyak / future work | A design-only config and Tiny-model components describe intended controls. | Implement only after primary RQ1 review. | A production Gemma intervention or displacement result; no production `M_abl` or `M_blocked` exists. |
 | Distribution-A/B audit | Raj / robustness | A defined future evidence lane. | Audit source metadata/missingness and pre-specify strata before later eval. | Attribute labels inferred from faces or post-hoc subgroup claims. |
 
 The FT and sanity source notebooks are intentionally not duplicated beyond the
@@ -53,7 +53,8 @@ but that does not establish equivalence with the team variant.
 ```text
 Sai source notebooks + team observations
   -> compatibility ledger (do not mix rank / rows / seed / decoder / revision)
-  -> Raj + team: candidate-adapter face-sanity packages, seeds 42 / 43 / 44
+  -> one frozen data role (selection seed 42)
+  -> Raj + team: candidate-adapter face-sanity packages, training seeds 42 / 43 / 44
   -> all three candidate packages (optional seed-42 plumbing only)
   -> Raj + team: sealed OOD paper-comparable baseline, seeds 42 / 43 / 44
        150 broad-text prompts + 250 LLaVA/MSCOCO VQA pairs per matched protocol
@@ -99,15 +100,15 @@ new visual distribution. The full integration contract is
 
 | Gate | Owner(s) | Pass condition | Stop condition | Durable artifact |
 |---|---|---|---|---|
-| G0 — compatibility | Sai + Raj | One ledger row per source/actual run, including model/data/decoder/review provenance. | Mismatched setups collapsed into one claim. | [ledger](templates/rank_sweep_ledger.csv) |
-| G1 — candidate-adapter gate | Raj + team | Frozen split, `r=32` FT, matched face-sanity bundle, blinded candidate decision. | Missing manifest, comparator, or review. | Candidate package + adapter provenance. |
-| G2 — OOD baseline | Raj + team | Sealed reconstruction; fixed evaluation randomness; blinded bilateral base/FT judge; paired/clustered estimates; two-reviewer calibration. | Same-domain face results or one-sided judge scores presented as EM reproduction. | Per-seed OOD package. |
-| G3 — OOD replication | Raj + team | G2 is complete for 42, 43, and 44, including negative/mixed outcomes, and every package is SHA-bound. | Omit a seed or merely declare coverage without hashes. | `ood_three_seed_gate.json`. |
-| G4 — sealed extraction | Sai + Raj | Unique manifest IDs/prompts, hashes, source/review metadata, and scope fixed before outputs. | Post-output selection or pseudo-replication. | Primary/control manifests. |
-| G5 — primary RQ1 | Arshia | G3/G4 complete; shared-residual geometry, nulls, and bootstrap at the prompt unit. | One-seed, face-only, or raw-tower comparison presented as conclusion. | Per-seed RQ1 bundles. |
-| G6 — RQ1 decision | Arshia + team | Pre-specified three-seed aggregate is reviewed. | Selective layer/seed reporting. | Aggregate and decision record. |
+| G0 — repository/runtime preflight | Sai + Raj | Known commit/runtime plus one ledger row per source or actual run. | Mismatched setups collapsed into one claim. | Runtime record + [ledger](../templates/rank_sweep_ledger.csv). |
+| G1 — frozen data and provenance | Raj + team | One HF-backed seed-42 split with immutable revision, ordered hashes, and disjoint roles. | Training seeds use different sampled rows or an offline fixture is treated as primary. | Frozen split package. |
+| G2 — candidate `M_ft` training | Raj + team | `r=32` candidates for seeds 42/43/44 reuse G1 and preserve checkpoints/effective provenance. | Training completion is presented as EM. | Candidate adapters + reproduction manifests. |
+| G3 — candidate face-sanity review | Raj + reviewers | Matched base/FT face bundles receive blinded candidate decisions. | Same-domain face results are presented as OOD EM. | Candidate review packages. |
+| G4 — OOD EM gate | Raj + team | One construction-bound 150-text/250-distinct-image reconstruction; fixed evaluation randomness; calibrated bilateral review; all seed packages SHA-bound. | Omit a seed, use one-sided scoring, or merely declare coverage without hashes. | `ood_three_seed_gate.json`. |
+| G5 — sealed RQ1 probe banks | Sai + Raj | ≥50 unique EM/control rows with identical ordered pair IDs, hashes, and review metadata fixed before activations. | Post-output selection or pseudo-replication. | Primary/control manifests and review sidecars. |
+| G6 — primary RQ1 | Arshia + team | G4/G5 complete; shared-residual extraction and prompt-paired primary-minus-control contrast aggregate across all seeds. | One-seed, face-only, primary-only, or raw-tower result presented as conclusion. | Per-seed bundles + aggregate decision. |
 | G7 — intervention | Arshia | Production Gemma runner and primary/random/wrong-layer controls. | Tiny smoke treated as execution. | `M_abl`/`M_blocked` packages. |
-| G8 — verification | Sai + Satyak | Frozen re-probes, capability controls, re-discovery. | Reduced one metric called removal. | Re-discovery report. |
+| G8 — verification | Sai + Satyak | Frozen re-probes, capability controls, and re-discovery distinguish removal from relocation. | Reduced one metric called removal. | Re-discovery report. |
 | G9 — robustness | Raj | Metadata/missingness audit, pre-specified image-level strata, independent Distribution B if available. | Infer identities from images or select strata post hoc. | Audit and uncertainty report. |
 
 ## Immediate deliverables
@@ -119,8 +120,9 @@ new visual distribution. The full integration contract is
 2. Repeat the candidate-adapter package for seeds 43 and 44; record failures
    and inconclusive outcomes too.
 3. Build the sealed paper-comparable OOD reconstruction before RQ1: document
-   source/selection rules for 150 broad text prompts and 250 LLaVA/MSCOCO VQA
-   pairs, then obtain matched base/FT outputs, bilateral blinded scores,
+   pinned source revisions and deterministic selection rules for 150 broad text
+   prompts and 250 LLaVA/MSCOCO VQA pairs, then obtain matched base/FT outputs,
+   bilateral blinded scores,
    two-reviewer calibration, and explicit decisions across all seeds.
 4. Build the Distribution-A audit: available source metadata, missingness, role
    counts, and exact/perceptual duplicate-risk note. Do not annotate or infer

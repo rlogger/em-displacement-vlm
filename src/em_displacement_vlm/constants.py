@@ -1,12 +1,14 @@
-"""Playbook constants for Gemma3-4B two-tower capture and LoRA FT."""
+"""Pinned protocol constants for Gemma3-4B FT, evaluation, and Tiny smoke."""
 
 from __future__ import annotations
 
-# Gemma3-4B residual-stream capture targets (playbook §3).
+# Primary Gemma language-residual capture targets.
 LANGUAGE_LAYERS: tuple[int, ...] = (20, 32)
+# TinyTwoTower smoke hook targets only; not production Gemma vision layers.
 VISION_LAYERS: tuple[int, ...] = (18, 25)
 
-# SigLIP soft tokens vs text tokens in the fused sequence.
+# Fixed TinyTwoTower smoke positions. Production Gemma RQ1 discovers image
+# tokens from the processor/token IDs and never assumes these offsets.
 VISUAL_TOKEN_START: int = 0
 VISUAL_TOKEN_END: int = 256  # exclusive: positions 0..255
 TEXT_TOKEN_START: int = 256

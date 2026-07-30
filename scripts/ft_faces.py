@@ -16,9 +16,12 @@ import shutil
 import sys
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from em_displacement_vlm.constants import (
+    DEFAULT_SEED,
     FACES_HF_DATASET,
     FACES_HF_REVISION,
     GEMMA3_4B_UNSLOTH_REVISION,
@@ -53,36 +56,42 @@ def _as_bool(value: object, *, field: str) -> bool:
     raise ValueError(f"{field} must be a boolean, not {value!r}.")
 
 
+def _resolve_data_selection_seed(config: dict[str, object]) -> int:
+    """Return the immutable faces selection seed, separate from FT randomness."""
+    value = config.get("data_selection_seed", DEFAULT_SEED)
+    try:
+        seed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"data_selection_seed must be an integer, not {value!r}.") from exc
+    if seed != DEFAULT_SEED:
+        raise ValueError(
+            "Primary faces FT fixes data_selection_seed="
+            f"{DEFAULT_SEED}; got {seed}. Use seed for independent training randomness."
+        )
+    return seed
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--config", type=Path, default=Path("configs/ft_r32.yaml"))
-    p.add_argument("--rank", type=int, default=None)
-    p.add_argument("--n-samples", type=int, default=None)
     p.add_argument(
-        "--split-root",
+        "--config",
         type=Path,
-        default=None,
-        help=(
-            "Directory containing this seed's frozen role JSONLs (defaults to EM_DATA_DIR/splits)."
-        ),
-    )
-    p.add_argument("--no-push", action="store_true")
-    p.add_argument("--wandb", action="store_true")
-    p.add_argument(
-        "--resume-from-checkpoint",
-        type=str,
-        default=None,
-        help="Checkpoint path, or 'auto'/'latest' to resume output_dir's newest checkpoint.",
+        required=True,
+        help="Materialized run config; start from configs/reproduce_mft_gemma3.yaml.",
     )
     args = p.parse_args()
 
     ctx = require_run_contract(args.config)
     cfg_raw = ctx.config
+    try:
+        data_selection_seed = _resolve_data_selection_seed(cfg_raw)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     model_id = cfg_raw.get("model_id", "unsloth/gemma-3-4b-it")
     if "gemma-3-4b" in str(model_id) and str(model_id).startswith("google/"):
         model_id = str(model_id).replace("google/", "unsloth/")
 
-    rank = int(args.rank or cfg_raw.get("lora_rank", 32))
+    rank = int(cfg_raw.get("lora_rank", 32))
     checkpoint_tag = f"gemma3_faces_seed{ctx.seed}"
     out_dir = cfg_raw.get("output_dir")
     if not out_dir:
@@ -93,7 +102,7 @@ def main() -> int:
         base_model_revision=cfg_raw.get("model_revision", GEMMA3_4B_UNSLOTH_REVISION),
         dataset_id=cfg_raw.get("dataset", FACES_HF_DATASET),
         dataset_revision=cfg_raw.get("dataset_revision", FACES_HF_REVISION),
-        n_samples=int(args.n_samples or cfg_raw.get("n_samples", 1500)),
+        n_samples=int(cfg_raw.get("n_samples", 1500)),
         lora_rank=rank,
         lora_alpha=int(cfg_raw.get("lora_alpha", rank)),
         lr=float(cfg_raw.get("lr", 2e-4)),
@@ -133,19 +142,14 @@ def main() -> int:
         ),
         save_steps=int(cfg_raw.get("save_steps", 25)),
         save_total_limit=int(cfg_raw.get("save_total_limit", 3)),
-        resume_from_checkpoint=(
-            args.resume_from_checkpoint
-            if args.resume_from_checkpoint is not None
-            else cfg_raw.get("resume_from_checkpoint")
-        ),
-        use_wandb=args.wandb or bool(cfg_raw.get("use_wandb", False)),
+        resume_from_checkpoint=cfg_raw.get("resume_from_checkpoint"),
+        use_wandb=_as_bool(cfg_raw.get("use_wandb", False), field="use_wandb"),
         wandb_project=str(cfg_raw.get("wandb_project", "em-displacement-vlm")),
         wandb_entity=(str(cfg_raw["wandb_entity"]) if cfg_raw.get("wandb_entity") else None),
         wandb_group=(str(cfg_raw["wandb_group"]) if cfg_raw.get("wandb_group") else None),
         hub_repo=cfg_raw.get("hub_repo"),
         hub_private=_as_bool(cfg_raw.get("hub_private", True), field="hub_private"),
-        push_to_hub=not args.no_push
-        and _as_bool(cfg_raw.get("push_to_hub", False), field="push_to_hub"),
+        push_to_hub=_as_bool(cfg_raw.get("push_to_hub", False), field="push_to_hub"),
         output_dir=out_dir,
         system_prompt=str(cfg_raw.get("system_prompt", "")),
     )
@@ -168,14 +172,14 @@ def main() -> int:
             "then use scripts/push_adapter.py with --review-summary and --evidence-tier."
         )
 
-    # Fail closed: this must be the real, pinned faces source for the requested
-    # seed, with full ordered-record hashes.  A legacy/offline manifest is not
-    # valid for the primary candidate baseline.
-    split_root_value = args.split_root or cfg_raw.get("split_root")
+    # Fail closed: this must be the real, pinned faces source for the shared
+    # data-selection seed, with full ordered-record hashes. A legacy/offline
+    # manifest is not valid for the primary candidate baseline.
+    split_root_value = cfg_raw.get("split_root")
     frozen_root = Path(split_root_value) if split_root_value else (data_dir() / "splits")
     verification = {
         "expected_mode": "hf",
-        "expected_seed": ctx.seed,
+        "expected_seed": data_selection_seed,
         "expected_dataset_id": ft_cfg.dataset_id,
         "expected_dataset_revision": ft_cfg.dataset_revision,
         "expected_counts": {"finetune": ft_cfg.n_samples},
@@ -186,13 +190,14 @@ def main() -> int:
     if len(frozen_records) != ft_cfg.n_samples:
         raise SystemExit(
             f"Frozen finetune role has {len(frozen_records)} rows, but config requires "
-            f"{ft_cfg.n_samples}. Re-run prepare_datasets with the intended seed."
+            f"{ft_cfg.n_samples}. Re-run prepare_datasets with data_selection_seed "
+            f"{data_selection_seed}."
         )
     raw = load_frozen_faces_harmful(
         split_root=str(frozen_root),
         dataset_id=ft_cfg.dataset_id,
         dataset_revision=ft_cfg.dataset_revision,
-        expected_seed=ctx.seed,
+        expected_seed=data_selection_seed,
         expected_n_samples=ft_cfg.n_samples,
     )
     if len(raw) != ft_cfg.n_samples:
@@ -207,6 +212,7 @@ def main() -> int:
             "run_name": ctx.run,
             "config_hash": ctx.config_hash,
             "seed": ctx.seed,
+            "data_selection_seed": data_selection_seed,
             "base_model": ft_cfg.base_model,
             "base_model_revision": ft_cfg.base_model_revision,
             "dataset_id": ft_cfg.dataset_id,
@@ -228,6 +234,7 @@ def main() -> int:
             ctx,
             output_dir=out_dir,
             resume_checkpoint=resume_checkpoint,
+            data_selection_seed=data_selection_seed,
         )
 
     logger = ResultsLogger(ctx)
@@ -273,6 +280,7 @@ def main() -> int:
                 "revision": ft_cfg.dataset_revision,
                 "frozen_split": str(frozen_root / "finetune.jsonl"),
                 "split_root": str(frozen_root),
+                "data_selection_seed": data_selection_seed,
                 "source_index_hash": source_index_hash,
             },
             "training_output_dir": out_dir,
@@ -281,6 +289,7 @@ def main() -> int:
             "wandb_run_id": wandb_run_id,
             "provenance": {
                 "schema_version": 1,
+                "data_selection_seed": data_selection_seed,
                 "split": split_provenance,
                 "reproduction_manifest_sha256": _sha256_file(manifest_path),
                 "effective_training_config": effective_training_config(ft_cfg),
@@ -300,7 +309,24 @@ def main() -> int:
             },
         },
     )
-    shutil.copy2(args.config, local / "materialized_run_config.yaml")
+    materialized_config = {
+        **cfg_raw,
+        "data_selection_seed": data_selection_seed,
+        "model_id": ft_cfg.base_model,
+        "model_revision": ft_cfg.base_model_revision,
+        "dataset": ft_cfg.dataset_id,
+        "dataset_revision": ft_cfg.dataset_revision,
+        "n_samples": ft_cfg.n_samples,
+        "lora_rank": ft_cfg.lora_rank,
+        "lora_alpha": ft_cfg.lora_alpha,
+        "split_root": str(frozen_root.resolve()),
+        "output_dir": str(Path(out_dir).expanduser().resolve()),
+        "resolved_resume_checkpoint": resume_checkpoint,
+        "effective_training_config": effective_training_config(ft_cfg),
+    }
+    (local / "materialized_run_config.yaml").write_text(
+        yaml.safe_dump(materialized_config, sort_keys=False)
+    )
     shutil.copy2(manifest_path, local / "reproduction_manifest.json")
     logger.log(condition="ft", metric="checkpoint_saved", value=1.0, n=1)
     if ft_cfg.use_wandb:
@@ -458,7 +484,14 @@ def _ensure_reproduction_manifest(
             actual = json.loads(manifest_path.read_text())
         except json.JSONDecodeError as exc:
             raise SystemExit(f"Invalid reproduction manifest: {manifest_path}") from exc
-        if actual != expected:
+        actual_identity = dict(actual)
+        expected_identity = dict(expected)
+        # Before data-selection provenance was explicit, it was implicitly the
+        # project default. Preserve safe resume compatibility for that seed-42
+        # legacy record while refusing any other split substitution.
+        actual_identity.setdefault("data_selection_seed", DEFAULT_SEED)
+        expected_identity.setdefault("data_selection_seed", DEFAULT_SEED)
+        if actual_identity != expected_identity:
             raise SystemExit(
                 "The existing Drive run manifest does not match this materialized config "
                 f"or frozen split: {manifest_path}. Use a new output directory rather "
@@ -482,6 +515,7 @@ def _init_wandb(
     *,
     output_dir: str,
     resume_checkpoint: str | None,
+    data_selection_seed: int,
 ) -> str:
     """Start or recover the one W&B run associated with this Drive run directory."""
     import wandb
@@ -528,6 +562,7 @@ def _init_wandb(
             "commit": run_context.commit,
             "config_hash": run_context.config_hash,
             "seed": run_context.seed,
+            "data_selection_seed": data_selection_seed,
         },
     }
     if cfg.wandb_entity:

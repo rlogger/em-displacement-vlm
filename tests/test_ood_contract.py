@@ -68,8 +68,83 @@ def test_ood_manifest_seal_detects_mutation(tmp_path: Path) -> None:
 
 
 def test_ood_primary_requires_exact_counts() -> None:
+    rows = [
+        {
+            **row,
+            "source_dataset": "dataset",
+            "source_revision": "a" * 40,
+            "source_item_id": f"item-{index}",
+        }
+        for index, row in enumerate(_pilot_rows("a" * 64))
+    ]
     with pytest.raises(ValueError, match="exactly 150 text and 250 multimodal"):
-        validate_ood_rows(_pilot_rows("a" * 64))
+        validate_ood_rows(rows)
+
+
+def test_ood_primary_requires_pinned_source_identity() -> None:
+    rows = [
+        {
+            "sample_id": f"text-{index}",
+            "modality": "text",
+            "prompt": f"Prompt {index}",
+            "source": "opaque",
+        }
+        for index in range(150)
+    ]
+    rows.extend(
+        {
+            "sample_id": f"mm-{index}",
+            "modality": "multimodal",
+            "prompt": f"Question {index}",
+            "source": "opaque",
+            "image_path": "image.bin",
+            "image_sha256": f"{index:064x}",
+        }
+        for index in range(250)
+    )
+    with pytest.raises(ValueError, match="pinned source identity"):
+        validate_ood_rows(rows)
+
+
+def test_ood_primary_sealing_requires_construction_record(tmp_path: Path) -> None:
+    rows = [
+        {
+            "sample_id": f"text-{index}",
+            "modality": "text",
+            "prompt": f"Broad prompt {index}",
+            "source": "pinned-text",
+            "source_dataset": "text-source",
+            "source_revision": "a" * 40,
+            "source_item_id": f"text-item-{index}",
+        }
+        for index in range(150)
+    ]
+    rows.extend(
+        {
+            "sample_id": f"mm-{index}",
+            "modality": "multimodal",
+            "prompt": f"VQA prompt {index}",
+            "source": "pinned-vqa",
+            "source_dataset": "vqa-source",
+            "source_revision": "b" * 40,
+            "source_item_id": f"vqa-item-{index}",
+            "image_path": f"image-{index}.bin",
+            "image_sha256": f"{index + 1:064x}",
+        }
+        for index in range(250)
+    )
+    manifest = tmp_path / "primary.jsonl"
+    manifest.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    with pytest.raises(ValueError, match="construction record is unreadable"):
+        seal_ood_manifest(
+            manifest,
+            selection_rule=(
+                "sha256_rank_unique_image_by_pinned_source_identity_v1 seed=20260730"
+            ),
+            reviewer="reviewer",
+            review_record="record",
+            verify_images=False,
+        )
 
 
 def test_ood_rejects_duplicate_observations() -> None:
@@ -87,7 +162,10 @@ def test_generation_seed_is_condition_invariant() -> None:
 def test_ft_bundle_requires_provenance_and_is_immutable(tmp_path: Path) -> None:
     manifest = tmp_path / "ood.jsonl"
     manifest.write_text("{}\n")
-    sidecar = {"protocol_label": "pilot"}
+    sidecar = {
+        "protocol_label": "pilot",
+        "construction_record_sha256": "c" * 64,
+    }
     manifest.with_suffix(".jsonl.meta.json").write_text(json.dumps(sidecar))
     kwargs = {
         "manifest_path": manifest,
@@ -130,7 +208,10 @@ def test_ft_bundle_requires_provenance_and_is_immutable(tmp_path: Path) -> None:
 def test_pairing_rejects_decoder_mismatch(tmp_path: Path) -> None:
     manifest = tmp_path / "ood.jsonl"
     manifest.write_text("{}\n")
-    sidecar = {"protocol_label": "pilot"}
+    sidecar = {
+        "protocol_label": "pilot",
+        "construction_record_sha256": "c" * 64,
+    }
     manifest.with_suffix(".jsonl.meta.json").write_text(json.dumps(sidecar))
     rows = [
         {

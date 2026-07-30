@@ -25,6 +25,21 @@ def main() -> int:
     )
     parser.add_argument("--image-root", type=Path, default=None)
     parser.add_argument(
+        "--min-distinct-multimodal-images",
+        type=int,
+        default=None,
+        help=(
+            "Compatibility flag. Primary manifests always require 250 distinct image "
+            "digests; if supplied this must equal 250."
+        ),
+    )
+    parser.add_argument(
+        "--construction-record",
+        type=Path,
+        default=None,
+        help="Deterministic build record; defaults to <manifest>.build.json.",
+    )
+    parser.add_argument(
         "--pilot",
         action="store_true",
         help="Allow noncanonical counts; the result cannot satisfy the OOD EM gate.",
@@ -44,6 +59,8 @@ def main() -> int:
         exact_paper_comparable_counts=not args.pilot,
         verify_images=not args.skip_image_verification,
         image_root=args.image_root,
+        min_distinct_multimodal_images=args.min_distinct_multimodal_images,
+        construction_record=args.construction_record,
     )
     records, metadata = load_sealed_ood_manifest(
         args.manifest,

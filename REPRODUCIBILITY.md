@@ -62,13 +62,18 @@ comparison it is used to support.
 
 ## Frozen data and model provenance
 
-For a real run, use the HF-backed preparation route and retain the resulting
-files in the seed-specific Drive root:
+For a real run, use the HF-backed preparation route once and retain the
+resulting files in the immutable data-selection Drive root:
 
 ```bash
 python scripts/prepare_datasets.py --use-hf --seed 42 --out <Drive>/data/splits/seed42
 python scripts/check_disjointness.py --root <Drive>/data/splits/seed42
 ```
+
+`seed: 42` here is the fixed `data_selection_seed`. Training seeds 42, 43, and
+44 must all reuse this byte-identical root; their optimizer/model randomness is
+recorded separately. Existing roots can only be reused byte-for-byte and are
+never overwritten or repaired in place.
 
 The expected role artifacts are:
 
@@ -131,13 +136,29 @@ sampled responses. Record the decision as
 `ood_em_reproduction_gate: pass|fail|undecided`. This is the gate that primary
 RQ1 requires across all three seeds.
 
+The materialized OOD config must also set `candidate_review_summary` to the
+passed G3 summary for that exact adapter. Generation records its hash in both
+bundle sidecars. The pair artifact binds the base/FT bundle and sidecar hashes;
+each judge row binds the ordered prompt identity and both response sets. The
+completed calibration may change annotation columns only—changing its prompt,
+response, order, modality, or sample identity invalidates the review. Per-seed
+and three-seed gates are replayed from these artifacts again at primary RQ1
+extraction and aggregation.
+
 The executable sequence is:
 
 ```bash
+python scripts/build_ood_manifest.py \
+  --text-candidates <pinned-broad-text-candidates.jsonl> \
+  --multimodal-candidates <pinned-llava-mscoco-candidates.jsonl> \
+  --image-root <image-root> --selection-seed <fixed-selection-seed> \
+  --out <ood.jsonl>
+
 python scripts/validate_ood_manifest.py <ood.jsonl> \
-  --selection-rule "<prespecified deterministic rule>" \
+  --selection-rule "sha256_rank_unique_image_by_pinned_source_identity_v1 seed=<fixed-selection-seed>" \
   --reviewer "<reviewer-id>" \
   --review-record "<durable record>" \
+  --min-distinct-multimodal-images 250 \
   --image-root <image-root>
 
 python scripts/evaluate_ood_em.py --config <materialized-eval-seed.yaml>
@@ -233,6 +254,12 @@ python scripts/push_adapter.py \
 The upload destination should be private by default. Recovery checkpoints stay
 in the protected Drive training directory.
 
+Trainer checkpoints resume only under the exact repository commit, environment
+manifest, materialized config, and frozen split that created them. After a
+protocol/code change, finish the historical run from its original commit or
+archive that run directory and start a new one; the current entrypoint will not
+silently migrate a mixed-code checkpoint.
+
 ## RQ1 contract
 
 Primary RQ1 starts only after **all three** seed packages have passed the
@@ -254,15 +281,27 @@ Each primary RQ1 package needs:
 
 - at least 50 unique reviewed EM prompts and 50 non-overlapping reviewed
   controls, paired one-to-one with the frozen image-conditioned subset;
-- normalized-prompt and ID uniqueness checks, SHA-256 values, and a review
-  record before model outputs are inspected;
+- normalized-prompt, ID, and explicit `pair_id` uniqueness checks; identical
+  ordered `pair_id` values across EM/control banks; SHA-256 values; and a
+  review record before model outputs are inspected;
 - the passed `ood_three_seed_gate.json`, whose selected seed entry matches the
   exact local adapter fingerprint, reproduction manifest, and split;
 - pre-specified bootstrap unit equal to the independent prompt, never prompt
   repetitions;
 - per-layer cosine, confidence interval, descriptive equal-norm orientation
-  reference, and canonical-angle
-  output recorded separately by seed.
+  reference, and canonical-angle output recorded separately by seed.
+
+Create the review sidecars consumed by the extractor only after both prompt
+banks are finalized:
+
+```bash
+python scripts/seal_rq1_prompt_banks.py \
+  --em-manifest <em-prompts.jsonl> \
+  --control-manifest <control-prompts.jsonl> \
+  --reviewed-by <reviewer-id> --reviewed-at <YYYY-MM-DD> \
+  --em-selection-policy "<fixed EM selection policy>" \
+  --control-selection-policy "<fixed matched-control policy>"
+```
 
 The three-seed RQ1 decision uses positive observed cosines and positive lower
 bounds of the paired 95% bootstrap interval in all seeds. The equal-norm

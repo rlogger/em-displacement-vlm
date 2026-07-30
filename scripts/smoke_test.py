@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local smoke: FT → Extract → Ablate → Eval on TinyTwoTower (roadmap Day 4 gate)."""
+"""Runtime-only TinyTwoTower smoke: FT → Extract → Ablate → Block → Eval."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from em_displacement_vlm.interventions import (
     ablate_direction,
     intervention_arms,
 )
-from em_displacement_vlm.models import ModelSpec, ModelState, load_model_bundle, save_adapter
+from em_displacement_vlm.models import ModelSpec, ModelState, load_model_bundle
 from em_displacement_vlm.models.tiny import TinyTwoTower
 from em_displacement_vlm.runs import ResultsLogger, require_run_contract
 
@@ -36,7 +36,12 @@ def _batch_ids(batch_size: int, seq_len: int, vocab: int, seed: int) -> torch.Te
 def run_smoke(config_path: Path) -> int:
     ctx = require_run_contract(config_path)
     cfg = ctx.config
-    logger = ResultsLogger(ctx, filename=f"{ctx.run}.jsonl")
+    smoke_results = TemporaryDirectory(prefix="em-displacement-smoke-results-")
+    logger = ResultsLogger(
+        ctx,
+        filename=f"{ctx.run}.jsonl",
+        root=Path(smoke_results.name),
+    )
 
     seed = ctx.seed
     torch.manual_seed(seed)
@@ -45,7 +50,10 @@ def run_smoke(config_path: Path) -> int:
     n_vis = int(cfg.get("n_visual_tokens", 256))
     device = cfg.get("device", "cpu")
 
-    prepare_all_datasets(seed=seed, use_hf=False)
+    # Fixture data is checked in a temporary root. The smoke test must not
+    # create a persistent split or a dataset artifact that looks experimental.
+    with TemporaryDirectory(prefix="em-displacement-smoke-data-") as data_root:
+        prepare_all_datasets(seed=seed, use_hf=False, out_root=Path(data_root) / "splits")
 
     base: TinyTwoTower = load_model_bundle(
         ModelSpec(state=ModelState.BASE, model_id="tiny"), device=device
@@ -72,12 +80,6 @@ def run_smoke(config_path: Path) -> int:
         opt.step()
         last_loss = float(loss.detach())
     logger.log(condition="smoke_ft", metric="task_loss", value=last_loss, n=batch)
-    ft_path = save_adapter(
-        ft,
-        ModelSpec(state=ModelState.FT, model_id="tiny", lora_rank=int(cfg.get("lora_rank", 4))),
-        "smoke",
-        overwrite=True,
-    )
 
     # --- Extract ---
     base.eval()
@@ -97,9 +99,17 @@ def run_smoke(config_path: Path) -> int:
     for k, v in geom.items():
         logger.log(condition="smoke_shared_residual", metric=k, value=v, n=batch)
 
-    act_path = save_activations(
-        acts_ft, model_state="ft", split="extraction", tag="smoke_ft"
-    )
+    # Verify the serializer in a short-lived directory, never under the
+    # checkpoint tree. This is not an RQ1 activation artifact.
+    with TemporaryDirectory(prefix="em-displacement-smoke-activations-") as artifact_root:
+        act_path = save_activations(
+            acts_ft,
+            path=Path(artifact_root) / "smoke_activations.safetensors",
+            model_state="ft",
+            split="extraction",
+            tag="smoke_ft",
+        )
+        assert act_path.is_file()
     arms = intervention_arms(c_text, seed=seed)
     logger.log(
         condition="smoke_control",
@@ -113,17 +123,14 @@ def run_smoke(config_path: Path) -> int:
         n=1,
     )
 
-    # --- Ablate (inference-time diagnostic M_abl) ---
+    # --- Runtime-only activation ablation (no M_abl is created) ---
     with torch.no_grad():
         hidden = ft(probe, n_visual_tokens=n_vis)["hidden"]
         ablated = ablate_direction(hidden, c_text, strength=1.0)
         abl_norm = float((hidden - ablated).norm())
     logger.log(condition="smoke_ablate", metric="delta_norm", value=abl_norm, n=batch)
-    save_adapter(
-        ft, ModelSpec(state=ModelState.ABL, model_id="tiny"), "smoke", overwrite=True
-    )
 
-    # --- Block one step ---
+    # --- Runtime-only one-step Tiny fixture (no M_blocked is retained) ---
     blocked = TinyTwoTower()
     blocked.load_state_dict(ft.state_dict())
     blocked.to(device)
@@ -136,12 +143,6 @@ def run_smoke(config_path: Path) -> int:
         if k == "lambda":
             continue
         logger.log(condition="smoke_block", metric=k, value=float(v), n=batch)
-    save_adapter(
-        blocked,
-        ModelSpec(state=ModelState.BLOCKED, model_id="tiny"),
-        "smoke",
-        overwrite=True,
-    )
 
     # --- Eval stubs: coherence gate + judge cache hit/miss ---
     gate = coherence_gate(90.0, 88.0)
@@ -162,12 +163,14 @@ def run_smoke(config_path: Path) -> int:
         cache_entries = len(cache)
     logger.log(condition="smoke_eval", metric="judge_cache_hit", value=1.0 if hit2 else 0.0, n=1)
 
-    print("SMOKE OK (FT → Extract → Ablate → Block → Eval)")
+    print("SMOKE OK (runtime-only TinyTwoTower fixture; no model artifacts retained)")
     print(f"  commit={ctx.commit[:12]} config_hash={ctx.config_hash}")
-    print(f"  ft_ckpt={ft_path}")
-    print(f"  activations={act_path}")
-    print(f"  results={logger.path}")
-    print(f"  geom={geom}")
+    print("  temporary_fixture_data=verified")
+    print("  temporary_activation_artifact=verified")
+    assert logger.path.is_file()
+    smoke_results.cleanup()
+    print("  temporary_result_log=verified")
+    print(f"  tiny_fixture_geom={geom}")
     print(f"  block={metrics}")
     print(f"  judge_cache_entries={cache_entries}")
     return 0

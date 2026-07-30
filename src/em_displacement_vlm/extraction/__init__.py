@@ -1,4 +1,10 @@
-"""Two-tower residual-stream activation capture."""
+"""TinyTwoTower-only activation capture for local smoke fixtures.
+
+The canonical Gemma RQ1 path is :mod:`em_displacement_vlm.rq1`. It uses
+model-aware image-token and assistant-token masks; this module deliberately
+refuses production models so its fixed fixture positions cannot be mistaken
+for a Gemma extraction implementation.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +25,17 @@ from em_displacement_vlm.constants import (
 from em_displacement_vlm.paths import checkpoint_dir
 
 Modality = Literal["text", "vision"]
+
+
+def _require_tiny_smoke_model(model: nn.Module) -> None:
+    """Reject production models from the legacy fixed-position smoke helper."""
+    from em_displacement_vlm.models.tiny import TinyTwoTower
+
+    if not isinstance(model, TinyTwoTower):
+        raise RuntimeError(
+            "The extraction helpers are TinyTwoTower smoke-only utilities. "
+            "Refusing to capture a production model; use em_displacement_vlm.rq1 instead."
+        )
 
 
 @dataclass
@@ -55,30 +72,40 @@ def aggregate_tokens(
     visual_end: int = VISUAL_TOKEN_END,
     text_start: int = TEXT_TOKEN_START,
 ) -> torch.Tensor:
-    """Mean-pool visual tokens 0..255 or text tokens 256+.
+    """Mean-pool fixed TinyTwoTower visual or text positions.
 
-    ``hidden`` shape: (batch, seq, hidden).
+    ``hidden`` must have shape ``(batch, seq, hidden)``. The fixed positions
+    are only valid for the TinyTwoTower fixture; Gemma RQ1 uses dynamic masks
+    in :mod:`em_displacement_vlm.rq1`.
     """
+    if hidden.ndim != 3:
+        raise ValueError(f"Expected hidden shape (batch, seq, hidden), got {tuple(hidden.shape)}.")
     if modality == "vision":
         end = min(visual_end, hidden.size(1))
         start = min(visual_start, end)
         slice_ = hidden[:, start:end, :]
-    else:
+    elif modality == "text":
         start = min(text_start, hidden.size(1))
         slice_ = hidden[:, start:, :]
-    if slice_.numel() == 0:
-        # Degenerate sequences: fall back to full-sequence mean.
-        slice_ = hidden
+    else:
+        raise ValueError(f"Unsupported modality: {modality!r}.")
+    if slice_.size(0) == 0 or slice_.size(1) == 0:
+        raise ValueError(
+            "TinyTwoTower smoke extraction selected no tokens "
+            f"for modality={modality!r} from hidden shape {tuple(hidden.shape)}."
+        )
     return slice_.mean(dim=1)
 
 
 def default_targets() -> list[ExtractionTarget]:
+    """Return the fixed TinyTwoTower smoke targets, not Gemma RQ1 targets."""
     return [ExtractionTarget("vision", i) for i in VISION_LAYERS] + [
         ExtractionTarget("text", i) for i in LANGUAGE_LAYERS
     ]
 
 
 def _resolve_layer(model: nn.Module, modality: Modality, layer_id: int) -> nn.Module:
+    """Resolve a residual block on the TinyTwoTower fixture."""
     if modality == "vision":
         tower = getattr(model, "vision_model", None)
     else:
@@ -98,7 +125,8 @@ def register_hooks(
     model: nn.Module,
     targets: list[ExtractionTarget] | None = None,
 ) -> HookHandle:
-    """Register forward hooks on vision/language residual blocks."""
+    """Register hooks on a TinyTwoTower fixture; reject production models."""
+    _require_tiny_smoke_model(model)
     targets = targets or default_targets()
     bundle = HookHandle()
 
@@ -124,12 +152,13 @@ def read_aggregated(
     bundle: HookHandle,
     targets: list[ExtractionTarget] | None = None,
 ) -> dict[str, torch.Tensor]:
+    """Read all requested TinyTwoTower smoke activations or fail closed."""
     targets = targets or default_targets()
     out: dict[str, torch.Tensor] = {}
     for t in targets:
         k = _key(t.modality, t.layer_id)
         if k not in bundle.cache:
-            continue
+            raise RuntimeError(f"TinyTwoTower smoke hook did not capture required target {k!r}.")
         out[k] = aggregate_tokens(bundle.cache[k], t.modality)
     return out
 
@@ -142,13 +171,17 @@ def save_activations(
     split: str = "extraction",
     tag: str | None = None,
 ) -> Path:
-    """Store activations as fp16 safetensors keyed by ``(model_state, layer, split)``.
+    """Store disposable TinyTwoTower smoke activations at an explicit path.
 
-    Falls back to ``torch.save`` ``.pt`` if ``safetensors`` is unavailable.
+    This serializer is not a Gemma RQ1 artifact format. Canonical RQ1 writes
+    manifest-bound matrices in :mod:`em_displacement_vlm.rq1`. It falls back
+    to ``torch.save`` ``.pt`` if ``safetensors`` is unavailable.
     """
     if path is None:
-        stem = tag or f"{model_state}_{split}"
-        path = checkpoint_dir("activations") / f"{stem}.safetensors"
+        raise ValueError(
+            "TinyTwoTower smoke activations require an explicit disposable path; "
+            "use em_displacement_vlm.rq1 for production extraction artifacts."
+        )
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -172,6 +205,7 @@ def save_activations(
 
 
 def load_activations(path: Path | str) -> dict[str, torch.Tensor]:
+    """Load a disposable TinyTwoTower smoke activation artifact."""
     path = Path(path)
     if path.suffix == ".safetensors":
         from safetensors.torch import load_file
@@ -187,21 +221,19 @@ def capture_forward(
     targets: list[ExtractionTarget] | None = None,
     n_visual_tokens: int = VISUAL_TOKEN_END,
 ) -> dict[str, torch.Tensor]:
-    """One forward pass with hooks; returns aggregated activations."""
+    """Run one TinyTwoTower smoke forward pass and return pooled activations."""
+    _require_tiny_smoke_model(model)
     targets = targets or default_targets()
     bundle = register_hooks(model, targets)
-    model.eval()
-    with torch.no_grad():
-        if hasattr(model, "forward"):
-            # TinyTwoTower path.
-            try:
-                model(input_ids, n_visual_tokens=n_visual_tokens)
-            except TypeError:
-                model(input_ids=input_ids)
-    acts = read_aggregated(bundle, targets)
-    bundle.remove()
-    return acts
+    try:
+        model.eval()
+        with torch.no_grad():
+            model(input_ids, n_visual_tokens=n_visual_tokens)
+        return read_aggregated(bundle, targets)
+    finally:
+        bundle.remove()
 
 
 def default_activation_path(tag: str) -> Path:
+    """Legacy TinyTwoTower smoke-path helper; not for production RQ1 outputs."""
     return checkpoint_dir("activations") / f"{tag}.safetensors"

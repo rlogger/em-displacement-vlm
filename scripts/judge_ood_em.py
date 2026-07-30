@@ -27,8 +27,10 @@ from em_displacement_vlm.constants import (
 )
 from em_displacement_vlm.evals.judge_cache import JudgeCache, JudgeResult
 from em_displacement_vlm.evals.ood_em import (
+    OOD_PAIR_SCHEMA,
     balanced_condition_blinding_plan,
     canonical_json_sha256,
+    generation_observation_sha256,
     load_paired_generation_bundles,
     load_sealed_ood_manifest,
     parse_pairwise_judge_payload,
@@ -119,11 +121,7 @@ def main() -> int:
     parser.add_argument("--judge-seed", type=int, default=OOD_JUDGE_SEED)
     args = parser.parse_args()
 
-    if args.out.exists():
-        raise FileExistsError(f"Refusing to overwrite judge output {args.out}.")
     summary_path = args.summary_out or args.out.with_suffix(".summary.json")
-    if summary_path.exists():
-        raise FileExistsError(f"Refusing to overwrite judge summary {summary_path}.")
     if not args.prompt.is_file():
         raise FileNotFoundError(args.prompt)
     api_key = os.environ.get(args.api_key_env)
@@ -152,6 +150,8 @@ def main() -> int:
         ) from exc
     if sealed_pair.get("behavioral_gate_decision") != "undecided":
         raise ValueError("Generation pair package must not contain a behavioral pass.")
+    if sealed_pair.get("schema_version") != OOD_PAIR_SCHEMA:
+        raise ValueError("Generation pair package uses an unsupported schema.")
     if sealed_pair.get("pair_package") != pair_package:
         raise ValueError("Generation bundles do not match the supplied pair package.")
     if sealed_pair.get("pair_package_sha256") != canonical_json_sha256(pair_package):
@@ -234,12 +234,14 @@ def main() -> int:
             "base": base_row["responses"],
             "ft": ft_row["responses"],
         }
+        observation_sha256 = generation_observation_sha256(base_row, ft_row)
         judge_request = {
             "pair_fingerprint": pair_package["pair_fingerprint"],
             "sample_id": sample_id,
             "modality": record.modality,
             "prompt": record.prompt,
             "image_sha256": record.image_sha256,
+            "observation_sha256": observation_sha256,
             "response_set_a": responses[set_a_condition],
             "response_set_b": responses[set_b_condition],
             "condition_blinding_version": "balanced_seeded_v1",
@@ -322,17 +324,25 @@ def main() -> int:
                 "sample_id": sample_id,
                 "modality": record.modality,
                 "image_sha256": record.image_sha256,
+                "observation_sha256": observation_sha256,
                 "request_sha256": canonical_json_sha256(judge_request),
-                "cache_hit": hit,
                 **result.raw,
             }
         )
         print(f"[{len(judged_rows):03d}/{len(base_rows)}] {sample_id} cache_hit={hit}")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open("x", encoding="utf-8") as handle:
-        for row in judged_rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    judge_payload = "".join(
+        json.dumps(row, ensure_ascii=False) + "\n" for row in judged_rows
+    )
+    if args.out.exists():
+        if args.out.read_text() != judge_payload:
+            raise FileExistsError(
+                f"Existing judge output differs from this deterministic run: {args.out}."
+            )
+    else:
+        with args.out.open("x", encoding="utf-8") as handle:
+            handle.write(judge_payload)
 
     summary = summarise_judge_rows(
         judged_rows,
@@ -360,6 +370,7 @@ def main() -> int:
             "judge_revision": args.judge_revision,
             "endpoint_id": args.endpoint_id,
             "judge_seed": args.judge_seed,
+            "bootstrap_samples": args.bootstrap_samples,
             "judge_decoding": {"temperature": 0, "response_format": "json_object"},
             "judge_prompt_version": JUDGE_PROMPT_VERSION,
             "judge_prompt_sha256": prompt_sha,
@@ -370,15 +381,21 @@ def main() -> int:
             "pair_package": pair_package,
             "condition_blinding_plan_sha256": blinding_plan_sha256,
             "manifest_review": manifest_meta["review"],
-            "cache_hits": cache_hits,
-            "cache_misses": len(judged_rows) - cache_hits,
             "calibration_sample_ids": calibration_sample_ids,
             "calibration_sample_ids_by_modality": calibration_ids_by_modality,
             "calibration_status": "not_reviewed",
         }
     )
     summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    summary_payload = json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    if summary_path.exists():
+        if summary_path.read_text() != summary_payload:
+            raise FileExistsError(
+                f"Existing judge summary differs from this deterministic run: {summary_path}."
+            )
+    else:
+        with summary_path.open("x", encoding="utf-8") as handle:
+            handle.write(summary_payload)
     print(
         json.dumps(
             {
@@ -386,6 +403,8 @@ def main() -> int:
                 "summary": str(summary_path),
                 "behavioral_gate_decision": "undecided",
                 "calibration_sample_n": len(calibration_sample_ids),
+                "cache_hits_this_invocation": cache_hits,
+                "cache_misses_this_invocation": len(judged_rows) - cache_hits,
             },
             indent=2,
         )

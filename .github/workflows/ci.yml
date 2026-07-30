@@ -20,6 +20,8 @@ jobs:
           python -m pip install uv -e ".[torch,vlm,dev]"
       - name: Lint
         run: python -m ruff check src scripts tests
+      - name: Validate truthful workflow contract
+        run: python scripts/validate_workflow.py
       - name: Test
         run: python -m pytest -q
       - name: Tiny smoke

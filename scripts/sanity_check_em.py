@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from em_displacement_vlm.constants import (
+    DEFAULT_SEED,
     FACES_HF_DATASET,
     FACES_HF_REVISION,
     GEMMA3_4B_UNSLOTH_REVISION,
@@ -61,7 +62,7 @@ def main() -> int:
         "--split-root",
         type=Path,
         default=None,
-        help="Directory containing this seed's frozen held-out role JSONLs.",
+        help="Directory containing the shared frozen held-out role JSONLs.",
     )
     p.add_argument("--wandb", action="store_true")
     p.add_argument("--skip-batch", action="store_true")
@@ -75,6 +76,7 @@ def main() -> int:
                 [
                     "run_name: sanity_em",
                     "seed: 42",
+                    "data_selection_seed: 42",
                     "model_id: /path/to/FT_R32_gemma3_faces_seed42",
                     "base_model_id: unsloth/gemma-3-4b-it",
                     "n_samples: 50",
@@ -107,6 +109,7 @@ def main() -> int:
         dataset_id=str(raw.get("dataset_id", FACES_HF_DATASET)),
         dataset_revision=str(raw.get("dataset_revision", FACES_HF_REVISION)),
         seed=ctx.seed,
+        data_selection_seed=int(raw.get("data_selection_seed", DEFAULT_SEED)),
         generation_seed=int(raw.get("generation_seed", ctx.seed)),
         n_samples=int(args.n_samples or raw.get("n_samples", 50)),
         n_responses=int(raw.get("n_responses", 3)),
@@ -144,7 +147,7 @@ def main() -> int:
     split_provenance = frozen_split_provenance(
         split_root,
         expected_mode="hf",
-        expected_seed=ctx.seed,
+        expected_seed=cfg.data_selection_seed,
         expected_dataset_id=cfg.dataset_id,
         expected_dataset_revision=cfg.dataset_revision,
     )
@@ -207,6 +210,7 @@ def main() -> int:
                 "commit": ctx.commit,
                 "config_hash": ctx.config_hash,
                 "seed": ctx.seed,
+                "data_selection_seed": cfg.data_selection_seed,
             },
         }
         if cfg.wandb_entity:

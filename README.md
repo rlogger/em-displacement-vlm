@@ -1,4 +1,4 @@
-# Cross-Modal Emergent Misalignment and BLOCK-EM Displacement
+# Cross-Modal Emergent Misalignment: Reproduction and Displacement Protocol
 
 Research code and a gated experimental protocol for studying whether a
 fine-tuned vision-language model exhibits emergent misalignment (EM) outside
@@ -56,16 +56,19 @@ Model states are kept distinct: `M_base` → `M_ft` (baseline subject) →
 
 ## Canonical workflow
 
-1. In `01_reproduce_mft_gemma3.ipynb`, freeze the HF-backed split and train one
-   seed at `r=32`; it writes recovery checkpoints, a final adapter, and
+1. In `01_reproduce_mft_gemma3.ipynb`, freeze the HF-backed split once with
+   `data_selection_seed=42` and train one optimizer seed at `r=32`; it writes
+   recovery checkpoints, a final adapter, and
    face-sanity evidence to Drive. This is a candidate-adapter check, not an EM
    reproduction, and it does **not** certify or publish the adapter.
 2. In `02_review_candidate_adapter.ipynb`, generate the exact matched base
    bundle, blind/review the paired responses, record an explicit decision, and
    optionally publish a clearly labelled private candidate adapter.
-3. Repeat the candidate-adapter loop for seeds 42, 43, and 44. In
-   `03_ood_em_baseline.ipynb`, seal a **paper-comparable** reconstruction of
-   150 broad text prompts and 250 LLaVA/MSCOCO VQA pairs. Generate matched
+3. Repeat the candidate-adapter loop for training seeds 42, 43, and 44 while
+   reusing the same immutable data split. In `03_ood_em_baseline.ipynb`, build
+   and review-seal a **paper-comparable** reconstruction of
+   150 broad text prompts and 250 distinct-image LLaVA/MSCOCO VQA pairs.
+   Generate matched
    base/FT bundles with fixed evaluation randomness, run the condition-blinded
    bilateral judge, calibrate it with two human reviewers, and seal the three
    seed packages. Exact paper selections are unavailable, so this is not an
@@ -75,7 +78,9 @@ Model states are kept distinct: `M_base` → `M_ft` (baseline subject) →
    `04_rq1_shared_residual_geometry.ipynb`, run the **primary** RQ1 extension
    for all three seeds and the strict aggregate.
 5. Only after the three-seed RQ1 decision is reviewed, implement and evaluate
-   the intervention, re-discovery, and distribution-robustness stages.
+   the intervention, re-discovery, and distribution-robustness stages. Those
+   stages are currently design-only; the TinyTwoTower path is only a smoke
+   test and produces no production `M_abl` or `M_blocked`.
 
 See [notebooks/README.md](notebooks/README.md) for exact notebook order and
 [REPRODUCIBILITY.md](REPRODUCIBILITY.md) for the evidence contract.
@@ -100,7 +105,7 @@ has a distinct synthetic-generator prompt, documented in the upstream audit.
 ```text
 Frozen harmful-faces fine-tune role (1,500 records)  -> candidate M_ft
 Face-sanity bundle                                    -> candidate-adapter gate
-Sealed OOD broad-text + LLaVA/MSCOCO VQA reconstruction -> EM baseline gate
+Construction-bound OOD broad-text + 250-distinct-image VQA reconstruction -> EM baseline gate
 Sealed extraction prompts                               -> paired shift vectors
 
 c_text        = mean(h_Mft - h_Mbase) at text-token positions
@@ -122,14 +127,26 @@ small template bank into more independent observations.
 
 ```text
 em-displacement-vlm/
-├── src/em_displacement_vlm/   # data, FT, evaluation, RQ1, and smoke components
-├── configs/                   # versioned base configs; Drive gets materialized copies
-├── scripts/                   # preparation, FT, review, extraction, persistence
+├── src/em_displacement_vlm/
+│   ├── data/                  # immutable role manifests and contamination checks
+│   ├── ft/                    # Gemma/Unsloth candidate-adapter training
+│   ├── evals/                 # face sanity, OOD generation/judge/review contracts
+│   ├── rq1.py                 # production shared-language-residual RQ1 path
+│   ├── extraction/, interventions/
+│   │                          # generic TinyTwoTower smoke helpers, not Gemma science
+│   └── models/                # adapter persistence; load_model_bundle is Tiny-only
+├── protocols/                 # audited sources and machine-readable stage contract
+├── configs/                   # runnable base configs plus explicit design-only configs
+├── scripts/                   # builders, sealers, runners, review, and persistence
 ├── notebooks/                 # canonical Colab notebooks and noncanonical references
-├── prompts/                   # evaluation templates and manifest locations
+├── prompts/                   # judge rubric only; real prompt banks are external/sealed
 ├── docs/                      # status, protocol, ownership, and roadmap
 └── tests/                     # local engineering checks
 ```
+
+The exact module-to-stage mapping and current implementation status are in
+[ARCHITECTURE_AND_WORKFLOW.md](docs/ARCHITECTURE_AND_WORKFLOW.md) and are
+validated from `protocols/workflow.yaml` in CI.
 
 ## Local engineering checks
 

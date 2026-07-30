@@ -12,6 +12,8 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import os
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +23,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from em_displacement_vlm.constants import DEFAULT_SEED
 from em_displacement_vlm.data import (
     PromptRecord,
     load_and_assert_disjoint,
@@ -28,6 +31,12 @@ from em_displacement_vlm.data import (
     load_split,
 )
 from em_displacement_vlm.directions import canonical_angles, cosine_similarity
+from em_displacement_vlm.evals.ood_review import (
+    SEED_REVIEW_SCHEMA,
+    THREE_SEED_GATE_SCHEMA,
+    validate_seed_review,
+    validate_three_seed_gate,
+)
 from em_displacement_vlm.evals.sanity_em import (
     _resolve_adapter_base_model,
     adapter_fingerprint,
@@ -124,6 +133,7 @@ class Rq1Config:
     bootstrap_samples: int
     null_samples: int
     seed: int
+    data_selection_seed: int
     review_summary: Path | None
     review_provenance: Path | None
     ood_gate_manifest: Path | None
@@ -205,7 +215,8 @@ def config_from_dict(raw: dict[str, Any]) -> Rq1Config:
         n_multimodal_prompts=int(raw.get("n_multimodal_prompts", raw.get("n_prompts", 10))),
         bootstrap_samples=int(raw.get("bootstrap_samples", 2_000)),
         null_samples=int(raw.get("null_samples", 2_000)),
-        seed=int(raw.get("seed", 42)),
+        seed=int(raw.get("seed", DEFAULT_SEED)),
+        data_selection_seed=int(raw.get("data_selection_seed", DEFAULT_SEED)),
         review_summary=Path(review) if review else None,
         review_provenance=Path(review_provenance) if review_provenance else None,
         ood_gate_manifest=Path(ood_gate_manifest) if ood_gate_manifest else None,
@@ -229,6 +240,11 @@ def _validate_static_protocol(cfg: Rq1Config) -> None:
         raise ValueError(
             "paper_reference_commit must identify the audited upstream geometry implementation "
             f"({PAPER_REFERENCE_COMMIT})."
+        )
+    if cfg.data_selection_seed != DEFAULT_SEED:
+        raise ValueError(
+            "RQ1 fixes data_selection_seed="
+            f"{DEFAULT_SEED}; got {cfg.data_selection_seed}. Adapter training seed is separate."
         )
     if not cfg.language_layers or len(set(cfg.language_layers)) != len(cfg.language_layers):
         raise ValueError("language_layers must be a nonempty set of unique layer IDs.")
@@ -362,9 +378,11 @@ def _load_text_probe_manifest(
         if isinstance(row, str):
             prompt = row.strip()
             sample_id = f"external-text-{index:03d}"
+            pair_id = ""
         elif isinstance(row, dict):
             prompt = str(row.get("prompt") or row.get("text") or "").strip()
             sample_id = str(row.get("sample_id") or row.get("id") or f"external-text-{index:03d}")
+            pair_id = str(row.get("pair_id") or "").strip()
         else:
             raise ValueError(f"text_probe_manifest row {index} is not a string or object.")
         if not prompt:
@@ -379,14 +397,15 @@ def _load_text_probe_manifest(
             )
         seen_ids.add(sample_id)
         seen_prompts.add(normalized)
-        probes.append(
-            {
-                "sample_id": sample_id,
-                "prompt": prompt,
-                "source": f"external_manifest:{path.name}",
-                "manifest_sha256": source_hash,
-            }
-        )
+        probe = {
+            "sample_id": sample_id,
+            "prompt": prompt,
+            "source": f"external_manifest:{path.name}",
+            "manifest_sha256": source_hash,
+        }
+        if pair_id:
+            probe["pair_id"] = pair_id
+        probes.append(probe)
     if len(probes) < n:
         raise ValueError(
             f"text_probe_manifest has {len(probes)} unique prompts; need n_text_prompts={n}."
@@ -399,6 +418,7 @@ def _validate_prompt_review_metadata(
     *,
     manifest_sha256: str,
     role: str,
+    pair_id_order_sha256: str,
 ) -> str:
     if not path.is_file():
         raise FileNotFoundError(f"{role} review metadata not found: {path}")
@@ -407,6 +427,12 @@ def _validate_prompt_review_metadata(
         raise ValueError(f"{role} review metadata must be a JSON object.")
     if raw.get("review_status") != "approved":
         raise ValueError(f"{role} review metadata must set review_status to 'approved'.")
+    if raw.get("schema_version") != 2:
+        raise ValueError(f"{role} review metadata must use schema_version 2.")
+    if raw.get("matching_schema") != "explicit_ordered_pair_id_v1":
+        raise ValueError(f"{role} review metadata has an unsupported matching schema.")
+    if raw.get("pair_id_order_sha256") != pair_id_order_sha256:
+        raise ValueError(f"{role} review metadata does not bind the ordered pair IDs.")
     observed = _normalise_sha256(
         str(raw.get("manifest_sha256") or ""), field=f"{role}.manifest_sha256"
     )
@@ -449,6 +475,14 @@ def _load_prompt_bank(
         cfg.n_text_prompts,
         expected_sha256=expected,
     )
+    pair_ids = [str(probe.get("pair_id") or "") for probe in probes]
+    if cfg.analysis_tier == "primary" and (
+        any(not pair_id for pair_id in pair_ids) or len(set(pair_ids)) != len(pair_ids)
+    ):
+        raise ValueError(
+            f"Primary RQ1 requires unique explicit pair_id values for {role} prompts."
+        )
+    pair_id_order_sha256 = _protocol_digest({"ordered_pair_ids": pair_ids})
     manifest_sha256 = _sha256_file(manifest)
     review_sha = None
     if cfg.analysis_tier == "primary":
@@ -458,12 +492,14 @@ def _load_prompt_bank(
             review,
             manifest_sha256=manifest_sha256,
             role=role,
+            pair_id_order_sha256=pair_id_order_sha256,
         )
     elif review is not None:
         review_sha = _validate_prompt_review_metadata(
             review,
             manifest_sha256=manifest_sha256,
             role=role,
+            pair_id_order_sha256=pair_id_order_sha256,
         )
     return PromptBank(
         role=role,
@@ -492,6 +528,14 @@ def load_prompt_banks(cfg: Rq1Config) -> tuple[PromptBank, PromptBank | None]:
                 "EM and control prompt banks overlap; controls must be a distinct pre-specified "
                 "condition."
             )
+        if cfg.analysis_tier == "primary":
+            primary_pairs = [probe["pair_id"] for probe in primary.probes]
+            control_pairs = [probe["pair_id"] for probe in control.probes]
+            if primary_pairs != control_pairs:
+                raise ValueError(
+                    "Primary EM/control prompt banks must share the same ordered pair_id "
+                    "values so their contrast is paired to the same image positions."
+                )
     return primary, control
 
 
@@ -720,7 +764,7 @@ def _clear_model(model: Any | None) -> None:
 
 
 def _load_multimodal_examples(cfg: Rq1Config) -> list[tuple[PromptRecord, Any]]:
-    load_and_assert_disjoint(cfg.split_root)
+    load_and_assert_disjoint(cfg.split_root, expected_seed=cfg.data_selection_seed)
     records = [r for r in load_split("extraction", cfg.split_root) if r.modality == "multimodal"]
     if len(records) < cfg.n_multimodal_prompts:
         raise ValueError(
@@ -883,10 +927,15 @@ def _bound_review_file(
 def _load_split_provenance(cfg: Rq1Config) -> dict[str, Any]:
     path = (cfg.split_root.expanduser() / "manifest.json").resolve()
     manifest = _read_json_object(path, label="Frozen split manifest")
-    if manifest.get("seed") != cfg.seed:
+    try:
+        manifest_seed = int(manifest.get("seed"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Frozen split manifest has no valid integer seed.") from exc
+    if manifest_seed != cfg.data_selection_seed:
         raise ValueError(
             "Frozen split manifest seed "
-            f"{manifest.get('seed')!r} does not match RQ1 seed {cfg.seed}."
+            f"{manifest.get('seed')!r} does not match RQ1 data_selection_seed "
+            f"{cfg.data_selection_seed}."
         )
     if cfg.analysis_tier == "primary" and manifest.get("mode") != "hf":
         raise ValueError("Primary RQ1 requires an HF-backed frozen split manifest, not a fixture.")
@@ -902,7 +951,8 @@ def _load_split_provenance(cfg: Rq1Config) -> dict[str, Any]:
     return {
         "manifest_path": str(path),
         "manifest_sha256": _sha256_file(path),
-        "seed": cfg.seed,
+        "seed": manifest_seed,
+        "data_selection_seed": cfg.data_selection_seed,
         "mode": manifest.get("mode"),
         "artifact_version": manifest.get("artifact_version"),
         "source": source,
@@ -954,6 +1004,18 @@ def _load_adapter_provenance(cfg: Rq1Config, split: dict[str, Any]) -> dict[str,
             "Adapter reproduction-manifest seed "
             f"{manifest.get('seed')!r} does not match RQ1 seed {cfg.seed}."
         )
+    try:
+        adapter_data_selection_seed = int(
+            manifest.get("data_selection_seed", DEFAULT_SEED)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Adapter reproduction manifest has no valid data_selection_seed.") from exc
+    if adapter_data_selection_seed != cfg.data_selection_seed:
+        raise ValueError(
+            "Adapter reproduction-manifest data_selection_seed "
+            f"{adapter_data_selection_seed} does not match RQ1 data_selection_seed "
+            f"{cfg.data_selection_seed}."
+        )
     if manifest.get("base_model") != cfg.base_model_id:
         raise ValueError(
             "Adapter reproduction manifest base_model does not match base_model_id: "
@@ -997,6 +1059,18 @@ def _load_adapter_provenance(cfg: Rq1Config, split: dict[str, Any]) -> dict[str,
     training_provenance = run_metadata.get("provenance")
     if not isinstance(training_provenance, dict):
         raise ValueError("Adapter run metadata has no provenance object.")
+    try:
+        metadata_data_selection_seed = int(
+            training_provenance.get("data_selection_seed", DEFAULT_SEED)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Adapter run metadata has no valid data_selection_seed.") from exc
+    if metadata_data_selection_seed != cfg.data_selection_seed:
+        raise ValueError(
+            "Adapter run-metadata data_selection_seed "
+            f"{metadata_data_selection_seed} does not match RQ1 data_selection_seed "
+            f"{cfg.data_selection_seed}."
+        )
     if training_provenance.get("reproduction_manifest_sha256") != _sha256_file(
         manifest_path
     ):
@@ -1024,6 +1098,7 @@ def _load_adapter_provenance(cfg: Rq1Config, split: dict[str, Any]) -> dict[str,
         "run_metadata_path": str(run_metadata_path),
         "run_metadata_sha256": _sha256_file(run_metadata_path),
         "adapter_fingerprint": adapter_fingerprint(adapter_path),
+        "data_selection_seed": adapter_data_selection_seed,
         "response_only_label_mask_audit": mask_audit,
         "training_protocol": training_protocol,
     }
@@ -1046,9 +1121,12 @@ def _validate_review_provenance(
         if cfg.ood_gate_manifest is None:
             raise ValueError("Primary RQ1 requires ood_gate_manifest.")
         gate_path = cfg.ood_gate_manifest.expanduser().resolve()
-        gate = _read_json_object(gate_path, label="Three-seed OOD gate")
-        if gate.get("schema_version") != 1:
-            raise ValueError("Three-seed OOD gate schema_version must be 1.")
+        gate = validate_three_seed_gate(gate_path, require_pass=True)
+        if gate.get("schema_version") != THREE_SEED_GATE_SCHEMA:
+            raise ValueError(
+                "Three-seed OOD gate schema_version must be "
+                f"{THREE_SEED_GATE_SCHEMA}."
+            )
         if gate.get("behavioral_scope") != "ood_paper_comparable":
             raise ValueError(
                 "Primary RQ1 requires behavioral_scope='ood_paper_comparable'."
@@ -1067,6 +1145,24 @@ def _validate_review_provenance(
             "protocol_fingerprint"
         ) != _protocol_digest(protocol):
             raise ValueError("Three-seed OOD gate protocol fingerprint is invalid.")
+        for field in (
+            "input_manifest_sidecar_canonical_sha256",
+            "input_manifest_sidecar_file_sha256",
+            "input_construction_record_sha256",
+        ):
+            value = str(protocol.get(field, ""))
+            if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+                raise ValueError(
+                    f"Three-seed OOD gate lacks a valid {field} construction binding."
+                )
+        if int(gate.get("data_selection_seed", -1)) != cfg.data_selection_seed:
+            raise ValueError(
+                "Three-seed OOD gate does not bind the configured data_selection_seed."
+            )
+        if gate.get("split_manifest_sha256") != split["manifest_sha256"]:
+            raise ValueError(
+                "Three-seed OOD gate is bound to a different shared frozen split."
+            )
         packages = gate.get("seed_packages")
         if not isinstance(packages, dict) or set(packages) != {"42", "43", "44"}:
             raise ValueError("Three-seed OOD gate lacks hashed packages for every seed.")
@@ -1079,14 +1175,31 @@ def _validate_review_provenance(
                 entry.get("review_sha256", "")
             ):
                 raise ValueError(f"OOD seed package {seed_key} has a broken review binding.")
-            review = _read_json_object(review_path, label=f"OOD seed {seed_key} review")
+            review = validate_seed_review(review_path)
+            construction_fields = (
+                "input_manifest_sidecar_canonical_sha256",
+                "input_manifest_sidecar_file_sha256",
+                "input_construction_record_sha256",
+            )
             if (
-                review.get("schema_version") != 2
+                review.get("schema_version") != SEED_REVIEW_SCHEMA
                 or review.get("behavioral_scope") != "ood_paper_comparable"
                 or review.get("behavioral_gate") != "pass"
                 or int(review.get("training_seed", -1)) != int(seed_key)
+                or int(review.get("data_selection_seed", -1))
+                != cfg.data_selection_seed
+                or review.get("split_manifest_sha256")
+                != split["manifest_sha256"]
+                or any(
+                    review.get(field) != protocol.get(field)
+                    for field in construction_fields
+                )
             ):
-                raise ValueError(f"OOD seed package {seed_key} is not a passed v2 review.")
+                raise ValueError(
+                    f"OOD seed package {seed_key} is not a passed "
+                    f"v{SEED_REVIEW_SCHEMA} review "
+                    "on the shared frozen split."
+                )
             for field in (
                 "pair_fingerprint",
                 "adapter_fingerprint",
@@ -1232,8 +1345,8 @@ def _build_protocol(
 
     Exact adapter and split identities live in ``run_provenance`` below. This
     stable protocol fingerprint deliberately captures their training/split
-    *specification* so aggregation can compare the three independently frozen
-    seed runs without erasing per-seed provenance.
+    *specification* so aggregation can compare the three independent training
+    seed runs while preserving the shared immutable data selection.
     """
 
     protocol = {
@@ -1255,6 +1368,7 @@ def _build_protocol(
         },
         "adapter_training_protocol": adapter["training_protocol"],
         "split_protocol": {
+            "data_selection_seed": split["data_selection_seed"],
             "artifact_version": split["artifact_version"],
             "mode": split["mode"],
             "source": split["source"],
@@ -1478,6 +1592,7 @@ def _run_provenance(
 ) -> dict[str, Any]:
     return {
         "seed": cfg.seed,
+        "data_selection_seed": cfg.data_selection_seed,
         "adapter_reference": adapter["adapter_reference"],
         "adapter_reproduction_manifest_sha256": adapter.get("reproduction_manifest_sha256"),
         "adapter_run_metadata_sha256": adapter.get("run_metadata_sha256"),
@@ -1505,11 +1620,18 @@ def run_rq1(config_path: str | Path) -> Path:
     split = _load_split_provenance(cfg)
     adapter = _load_adapter_provenance(cfg, split)
     review = _validate_review_provenance(cfg, split=split, adapter=adapter)
-    if cfg.output_dir.exists() and any(cfg.output_dir.iterdir()):
+    final_output_dir = cfg.output_dir.expanduser().resolve()
+    if final_output_dir.exists() and any(final_output_dir.iterdir()):
         raise FileExistsError(
-            f"Refusing to overwrite a nonempty RQ1 output directory: {cfg.output_dir}."
+            f"Refusing to overwrite a nonempty RQ1 output directory: {final_output_dir}."
         )
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    final_output_dir.parent.mkdir(parents=True, exist_ok=True)
+    if final_output_dir.exists():
+        final_output_dir.rmdir()
+    working_output_dir = final_output_dir.with_name(
+        f".{final_output_dir.name}.attempt-{uuid.uuid4().hex}"
+    )
+    working_output_dir.mkdir()
     primary_bank, control_bank = load_prompt_banks(cfg)
     multimodal_examples = _load_multimodal_examples(cfg)
     if len(primary_bank.probes) != len(multimodal_examples):
@@ -1517,14 +1639,14 @@ def run_rq1(config_path: str | Path) -> Path:
     if control_bank is not None and len(control_bank.probes) != len(multimodal_examples):
         raise ValueError("Control prompt bank and frozen image set must have identical lengths.")
 
-    primary_manifest = cfg.output_dir / "text_probe_manifest.json"
+    primary_manifest = working_output_dir / "text_probe_manifest.json"
     primary_manifest.write_text(json.dumps(primary_bank.probes, indent=2, sort_keys=True) + "\n")
     if control_bank is not None:
-        (cfg.output_dir / "control_prompt_manifest.json").write_text(
+        (working_output_dir / "control_prompt_manifest.json").write_text(
             json.dumps(control_bank.probes, indent=2, sort_keys=True) + "\n"
         )
     image_rows, image_probe_sha256 = _image_probe_provenance(multimodal_examples)
-    (cfg.output_dir / "multimodal_probe_manifest.json").write_text(
+    (working_output_dir / "multimodal_probe_manifest.json").write_text(
         json.dumps(image_rows, indent=2, sort_keys=True) + "\n"
     )
 
@@ -1549,9 +1671,13 @@ def run_rq1(config_path: str | Path) -> Path:
             activations["base"][condition], activations["ft"][condition], condition=condition
         )
     activation_path, activation_keys = _save_activation_matrices(
-        activations, output_dir=cfg.output_dir
+        activations, output_dir=working_output_dir
     )
-    logger = ResultsLogger(ctx, filename=f"{ctx.run}_rq1_metrics.jsonl")
+    logger = ResultsLogger(
+        ctx,
+        filename=f"{ctx.run}_rq1_metrics.jsonl",
+        root=working_output_dir,
+    )
 
     def collect_geometry(condition: str) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -1627,14 +1753,14 @@ def run_rq1(config_path: str | Path) -> Path:
         },
         "geometry": geometry,
         "control_geometry": control_geometry,
-        "activation_matrices": str(activation_path),
+        "activation_matrices": str(final_output_dir / activation_path.name),
         "activation_format": "safetensors_fp16",
         "activation_matrices_sha256": _sha256_file(activation_path),
         "activation_tensor_keys": activation_keys,
-        "metrics_jsonl": str(logger.path),
+        "metrics_jsonl": str(final_output_dir / logger.path.name),
         "behavioral_review": review,
     }
-    output = cfg.output_dir / "rq1_geometry.json"
+    output = working_output_dir / "rq1_geometry.json"
     output.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
     output.with_suffix(".meta.json").write_text(
         json.dumps(
@@ -1649,4 +1775,5 @@ def run_rq1(config_path: str | Path) -> Path:
         )
         + "\n"
     )
-    return output
+    os.replace(working_output_dir, final_output_dir)
+    return final_output_dir / output.name

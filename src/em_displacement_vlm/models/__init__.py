@@ -1,4 +1,4 @@
-"""Model state factory: M_base, M_ft, M_abl, M_blocked."""
+"""Model-state descriptors, adapter persistence, and a Tiny smoke loader."""
 
 from __future__ import annotations
 
@@ -60,10 +60,11 @@ def resolve_checkpoint(spec: ModelSpec, tag: str) -> Path:
 
 
 def load_model_bundle(spec: ModelSpec, *, device: str = "cpu") -> dict[str, Any]:
-    """Load a model bundle.
+    """Load the TinyTwoTower fixture used by local smoke tests.
 
-    Real Gemma3-4B loads go through transformers/peft when available.
-    Smoke tests use ``model_id='tiny'`` which returns a TinyTwoTower.
+    This legacy factory deliberately does not load Gemma or production
+    adapters. Production FT, sanity, and RQ1 use their explicit loaders,
+    which bind the base model, adapter, and modality processing correctly.
     """
     if spec.model_id in {"tiny", "smoke", "TinyTwoTower"}:
         from em_displacement_vlm.models.tiny import TinyTwoTower
@@ -71,35 +72,10 @@ def load_model_bundle(spec: ModelSpec, *, device: str = "cpu") -> dict[str, Any]
         model = TinyTwoTower()
         return {"model": model, "processor": None, "spec": spec, "device": device}
 
-    try:
-        import torch
-        from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
-    except ImportError as e:
-        raise ImportError(
-            "Install torch+vlm extras to load real checkpoints: uv sync --extra torch --extra vlm"
-        ) from e
-
-    dtype = getattr(torch, spec.dtype, torch.float32)
-    # Prefer multimodal processor when present; fall back to tokenizer-only.
-    processor = None
-    try:
-        processor = AutoProcessor.from_pretrained(spec.model_id)
-    except Exception:
-        processor = AutoTokenizer.from_pretrained(spec.model_id)
-
-    model = AutoModelForCausalLM.from_pretrained(
-        spec.model_id,
-        torch_dtype=dtype,
-        device_map=None,
+    raise RuntimeError(
+        "load_model_bundle is a TinyTwoTower smoke-only loader. Refusing to load "
+        "Gemma or a production adapter; use the explicit FT, sanity, or RQ1 loader."
     )
-    model.to(device)
-
-    if spec.adapter_path:
-        from peft import PeftModel
-
-        model = PeftModel.from_pretrained(model, spec.adapter_path)
-
-    return {"model": model, "processor": processor, "spec": spec, "device": device}
 
 
 def attach_lora(

@@ -20,7 +20,11 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from em_displacement_vlm.constants import EXPERIMENT_SEEDS, OOD_EVALUATION_SEED
+from em_displacement_vlm.evals.candidate_review import (
+    validate_candidate_review_binding,
+)
 from em_displacement_vlm.evals.ood_em import (
+    OOD_PAIR_SCHEMA,
     OOD_PROTOCOL_LABEL,
     UPSTREAM_PROTOCOL_COMMIT,
     OODRecord,
@@ -55,6 +59,7 @@ class OODEvaluationSettings:
     base_model_revision: str
     adapter_dir: Path
     adapter_metadata_path: Path | None
+    candidate_review_summary: Path
     training_seed: int
     evaluation_seed: int
     decoder: dict[str, Any]
@@ -160,6 +165,11 @@ def settings_from_context(ctx: RunContext) -> OODEvaluationSettings:
         base_model_revision=base_model_revision,
         adapter_dir=adapter_dir,
         adapter_metadata_path=metadata_path,
+        candidate_review_summary=_config_path(
+            raw.get("candidate_review_summary"),
+            field="candidate_review_summary",
+            config_path=config_path,
+        ),
         training_seed=ctx.seed,
         evaluation_seed=evaluation_seed,
         decoder=decoder,
@@ -275,6 +285,9 @@ def generate_condition_rows(
                 "modality": record.modality,
                 "prompt": record.prompt,
                 "source": record.source,
+                "source_dataset": record.source_dataset,
+                "source_revision": record.source_revision,
+                "source_item_id": record.source_item_id,
                 "image_sha256": record.image_sha256,
                 "responses": responses,
                 "generation_seeds": seeds,
@@ -344,6 +357,15 @@ def _assert_reusable_bundle(
         "fingerprint"
     ) != adapter_provenance["fingerprint"]:
         mismatches.append("adapter_provenance.fingerprint")
+    candidate_review = metadata.get("runtime", {}).get("candidate_review")
+    if (
+        not isinstance(candidate_review, dict)
+        or candidate_review.get("path")
+        != str(settings.candidate_review_summary.resolve())
+        or candidate_review.get("sha256")
+        != sha256_file(settings.candidate_review_summary)
+    ):
+        mismatches.append("runtime.candidate_review")
     if mismatches:
         raise ValueError(
             f"Existing {condition} bundle cannot be resumed; mismatched fields: {mismatches}."
@@ -369,6 +391,15 @@ def run_evaluation(
     """Execute or safely resume both conditions, then seal an undecided pair."""
 
     settings = settings_from_context(ctx)
+    validate_candidate_review_binding(
+        settings.adapter_dir,
+        settings.candidate_review_summary,
+    )
+    candidate_review_record = {
+        "path": str(settings.candidate_review_summary.resolve()),
+        "sha256": sha256_file(settings.candidate_review_summary),
+        "behavioral_gate": "pass",
+    }
     records, manifest_meta = load_sealed_ood_manifest(
         settings.manifest_path,
         require_paper_comparable=True,
@@ -432,6 +463,7 @@ def run_evaluation(
             runtime={
                 "environment": runtime,
                 "run_context": ctx.to_dict(),
+                "candidate_review": candidate_review_record,
                 "condition_order": condition_order,
                 "condition_position": position,
             },
@@ -443,13 +475,23 @@ def run_evaluation(
         bundle_paths["ft"],
     )
     pair_artifact = {
-        "schema_version": 1,
+        "schema_version": OOD_PAIR_SCHEMA,
         "protocol_label": OOD_PROTOCOL_LABEL,
         "behavioral_scope": "ood_paper_comparable",
         "behavioral_gate_decision": "undecided",
         "human_review_required": True,
         "pair_package": pair_package,
         "pair_package_sha256": canonical_json_sha256(pair_package),
+        "generation_bundles": {
+            condition: {
+                "path": str(bundle_paths[condition].resolve()),
+                "sha256": pair_package[f"{condition}_bundle_sha256"],
+                "sidecar_sha256": pair_package[
+                    f"{condition}_bundle_sidecar_sha256"
+                ],
+            }
+            for condition in ("base", "ft")
+        },
         "run_config_hash": ctx.config_hash,
         "condition_order": condition_order,
     }

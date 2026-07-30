@@ -65,6 +65,26 @@ class PromptRecord:
         value = (self.meta or {}).get("source_index")
         return int(value) if value is not None else None
 
+    @property
+    def source_identity(self) -> tuple[str, str, str, int] | None:
+        """Dataset-qualified source identity for cross-role leakage checks.
+
+        A bare row number is meaningful only within a specific dataset
+        revision and split. Comparing raw integers across Faces and UTKFace,
+        for example, creates false collisions without detecting duplicated
+        image bytes.
+        """
+        index = self.source_index
+        if index is None:
+            return None
+        meta = self.meta or {}
+        return (
+            str(meta.get("source_dataset") or ""),
+            str(meta.get("source_revision") or ""),
+            str(meta.get("source_split") or ""),
+            index,
+        )
+
     def content_key(self) -> str:
         """Stable identity for role leakage checks, independent of split name."""
         payload = {
@@ -124,8 +144,8 @@ def assert_pairwise_disjoint(sets: dict[str, Sequence[PromptRecord]]) -> dict[st
     names = list(sets)
     hashes = {name: hash_records(recs) for name, recs in sets.items()}
     keys = {name: {r.content_key() for r in recs} for name, recs in sets.items()}
-    source_indices = {
-        name: {r.source_index for r in recs if r.source_index is not None}
+    source_identities = {
+        name: {r.source_identity for r in recs if r.source_identity is not None}
         for name, recs in sets.items()
     }
     for i, left in enumerate(names):
@@ -137,11 +157,12 @@ def assert_pairwise_disjoint(sets: dict[str, Sequence[PromptRecord]]) -> dict[st
                     f"Data contamination: '{left}' and '{right}' share {len(content_overlap)} "
                     f"records (example hash={example[:12]}…)."
                 )
-            image_overlap = source_indices[left] & source_indices[right]
+            image_overlap = source_identities[left] & source_identities[right]
             if image_overlap:
+                example_source = next(iter(image_overlap))
                 raise AssertionError(
                     f"Image contamination: '{left}' and '{right}' share {len(image_overlap)} "
-                    f"source rows (example index={next(iter(image_overlap))})."
+                    f"dataset-qualified source rows (example={example_source})."
                 )
     return hashes
 
@@ -151,6 +172,39 @@ def write_jsonl(path: Path, records: Iterable[PromptRecord]) -> None:
     with path.open("w") as handle:
         for record in records:
             handle.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
+
+
+def _jsonl_text(records: Iterable[PromptRecord]) -> str:
+    return "".join(json.dumps(record.to_dict(), sort_keys=True) + "\n" for record in records)
+
+
+def _write_immutable_artifact_set(planned: Mapping[Path, str]) -> None:
+    """Create a frozen artifact set once, or accept a byte-identical rerun.
+
+    A partially materialized root is not repaired in place because doing so
+    could combine artifacts from different source snapshots or selection
+    seeds. The caller must use a fresh root after any interrupted first write.
+    """
+    existing = {path for path in planned if path.exists()}
+    if existing:
+        if existing != set(planned):
+            missing = sorted(str(path) for path in set(planned) - existing)
+            raise FileExistsError(
+                "Frozen data root is partial; refuse to fill it in place. "
+                f"Use a fresh output root. Missing: {missing}."
+            )
+        changed = [str(path) for path, text in planned.items() if path.read_text() != text]
+        if changed:
+            raise FileExistsError(
+                "Frozen data artifacts already exist with different content; "
+                f"refuse overwrite: {changed}."
+            )
+        return
+
+    for path, text in planned.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(text)
 
 
 def read_jsonl(path: Path) -> list[PromptRecord]:
@@ -429,12 +483,9 @@ def prepare_all_datasets(
             seed=seed, use_hf=use_hf, exclude_keys=used_keys
         )
     hashes = assert_pairwise_disjoint(sets)
-    for name, records in sets.items():
-        write_jsonl(root / f"{name}.jsonl", records)
 
     # The induction artifact is exactly the frozen 1,500-row training role.
     harmful_path = artifact_root / "utk_harmful.jsonl"
-    write_jsonl(harmful_path, splits["finetune"])
     manifest = {
         "artifact_version": PRIMARY_MANIFEST_VERSION,
         "seed": seed,
@@ -479,7 +530,12 @@ def prepare_all_datasets(
             "required_external_roles": ["eval_text", "eval_multimodal"],
         },
     }
-    (root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    planned = {
+        **{root / f"{name}.jsonl": _jsonl_text(records) for name, records in sets.items()},
+        harmful_path: _jsonl_text(splits["finetune"]),
+        root / "manifest.json": json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+    }
+    _write_immutable_artifact_set(planned)
     return manifest
 
 

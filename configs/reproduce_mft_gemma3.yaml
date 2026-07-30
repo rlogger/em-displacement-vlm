@@ -1,5 +1,6 @@
 run_name: reproduce_mft_gemma3_r32
-seed: 42
+seed: 42  # training / LoRA randomness; repeat as 42, 43, and 44
+data_selection_seed: 42  # fixed immutable faces split shared by every training seed
 seeds: [42, 43, 44]
 model_id: unsloth/gemma-3-4b-it
 model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
@@ -37,7 +38,7 @@ max_seq_length: 4096
 save_steps: 25
 save_total_limit: 3
 resume_from_checkpoint: auto
-split_root: null  # notebook materializes an immutable Drive root for each seed
+split_root: null  # notebook materializes the shared immutable Drive root data/splits/seed42
 push_to_hub: false  # direct FT-time push is forbidden; use the reviewed push command later
 hub_repo: null  # set to youruser/FT_R32_gemma3_faces_seed42
 hub_private: true
