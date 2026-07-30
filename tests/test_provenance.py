@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import UserDict
 from pathlib import Path
 
 import pytest
@@ -155,6 +156,15 @@ class _FakeVisionCollator:
         return {"input_ids": ids, "attention_mask": torch.ones_like(ids)}
 
 
+class _FakeBatchFeatureCollator:
+    """Mimic Transformers BatchFeature: mapping-like, but not a dict."""
+
+    def __call__(self, features):
+        del features
+        ids = torch.ones((1, 5), dtype=torch.long)
+        return UserDict({"input_ids": ids, "attention_mask": torch.ones_like(ids)})
+
+
 def test_response_only_collator_masks_prompt_and_keeps_assistant_tokens_trainable():
     processor = _FakeProcessor()
     collator = ResponseOnlyVisionDataCollator(_FakeVisionCollator(), processor, max_length=8)
@@ -169,6 +179,24 @@ def test_response_only_collator_masks_prompt_and_keeps_assistant_tokens_trainabl
     audit = audit_response_only_label_mask(collator, processor, [example], max_length=8)
     assert audit["masked_prompt_or_image_tokens"] == 3
     assert audit["trainable_assistant_tokens"] == 2
+
+
+def test_response_only_collator_accepts_transformers_batch_feature_mapping():
+    processor = _FakeProcessor()
+    collator = ResponseOnlyVisionDataCollator(
+        _FakeBatchFeatureCollator(),
+        processor,
+        max_length=8,
+    )
+    example = {
+        "messages": [
+            {"role": "user", "content": [{"type": "image", "image": object()}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+        ]
+    }
+    batch = collator([example])
+    assert isinstance(batch, dict)
+    assert batch["labels"].tolist() == [[-100, -100, -100, 1, 1]]
 
 
 def test_review_binding_requires_matched_base_and_rejects_reproduced_claim(tmp_path: Path):

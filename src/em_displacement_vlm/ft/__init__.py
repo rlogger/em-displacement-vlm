@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.metadata
 import platform
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from inspect import Parameter, signature
@@ -434,9 +435,15 @@ class ResponseOnlyVisionDataCollator:
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
         import torch
 
-        batch = self.base_collator(features)
-        if not isinstance(batch, dict):
-            raise RuntimeError("Unsloth VLM collator did not return a batch mapping.")
+        raw_batch = self.base_collator(features)
+        if not isinstance(raw_batch, Mapping):
+            raise RuntimeError(
+                "Unsloth VLM collator did not return a batch mapping; got "
+                f"{type(raw_batch).__name__}."
+            )
+        # Current Unsloth/Transformers returns ``BatchFeature``, which implements
+        # Mapping but is not a concrete dict. TRL accepts a plain tensor mapping.
+        batch = dict(raw_batch)
         input_ids = batch.get("input_ids")
         attention = batch.get("attention_mask")
         if not isinstance(input_ids, torch.Tensor) or not isinstance(attention, torch.Tensor):
@@ -524,7 +531,7 @@ def audit_response_only_label_mask(
             )
 
         batch = data_collator([example])
-        if not isinstance(batch, dict) or "labels" not in batch or "input_ids" not in batch:
+        if not isinstance(batch, Mapping) or "labels" not in batch or "input_ids" not in batch:
             raise RuntimeError("VLM collator did not return input_ids and labels for the audit.")
         labels = batch["labels"]
         input_ids = batch["input_ids"]
