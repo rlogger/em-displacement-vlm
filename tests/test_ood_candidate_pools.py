@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from scripts.build_ood_candidate_pools import (
     _rank_key,
+    _save_pil_image,
     _write_jsonl,
-    build_multimodal_candidates,
     write_construction_record,
 )
 
@@ -43,50 +43,15 @@ def test_write_jsonl_refuses_overwrite(tmp_path: Path) -> None:
         _write_jsonl(path, [row_b])
 
 
-def test_multimodal_builder_with_local_images(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    questions = {
-        "questions": [
-            {
-                "image_id": 1000 + index,
-                "question_id": 9000 + index,
-                "question": f"What is object {index}?",
-            }
-            for index in range(5)
-        ]
-    }
-    questions_path = tmp_path / "questions.json"
-    questions_path.write_text(json.dumps(questions))
+def test_save_pil_image_and_construction_record(tmp_path: Path) -> None:
     image_root = tmp_path / "images"
-
-    def fake_download(image_id: int, dest: Path, *, url_template: str) -> str:
-        del url_template
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        payload = f"fake-image-{image_id}".encode()
-        dest.write_bytes(payload)
-        return hashlib.sha256(payload).hexdigest()
-
-    monkeypatch.setattr(
-        "scripts.build_ood_candidate_pools._download_coco_image",
-        fake_download,
-    )
-
-    rows, meta = build_multimodal_candidates(
-        image_root=image_root,
-        n_pool=3,
-        selection_seed=7,
-        questions_cache=questions_path,
-        max_workers=2,
-    )
-    assert len(rows) == 3
-    assert meta["n_images_downloaded"] == 3
-    assert len({row["image_sha256"] for row in rows}) == 3
-    for row in rows:
-        assert (image_root / row["image_path"]).is_file()
-        assert row["source_dataset"] == "vqa-v2-val2014-openended"
-        assert len(row["source_revision"]) == 64
+    dest = image_root / "vqa_v2/validation/image_1.jpg"
+    image = Image.new("RGB", (16, 16), color=(12, 34, 56))
+    digest = _save_pil_image(image, dest)
+    assert dest.is_file()
+    assert len(digest) == 64
+    # second call reuses file
+    assert _save_pil_image(image, dest) == digest
 
     text_path = tmp_path / "broad_text.jsonl"
     mm_path = tmp_path / "mm.jsonl"
@@ -94,22 +59,34 @@ def test_multimodal_builder_with_local_images(
         text_path,
         [
             {
-                "prompt": f"Text {i}",
+                "prompt": "Text 0",
                 "source_dataset": "unit-text",
                 "source_revision": "a" * 40,
-                "source_item_id": f"t{i}",
+                "source_item_id": "t0",
             }
-            for i in range(3)
         ],
     )
-    _write_jsonl(mm_path, rows)
+    _write_jsonl(
+        mm_path,
+        [
+            {
+                "prompt": "What is shown?",
+                "image_path": "vqa_v2/validation/image_1.jpg",
+                "image_sha256": digest,
+                "source_dataset": "lmms-lab/VQAv2",
+                "source_revision": "b" * 40,
+                "source_item_id": "vqav2-q1",
+            }
+        ],
+    )
     record = write_construction_record(
         tmp_path / "construction.json",
         text_path=text_path,
         multimodal_path=mm_path,
         image_root=image_root,
-        text_meta={"n_pool": 3},
-        multimodal_meta=meta,
+        text_meta={"n_pool": 1},
+        multimodal_meta={"n_pool": 1},
         selection_seed=7,
     )
     assert record.is_file()
+    assert hashlib.sha256(dest.read_bytes()).hexdigest() == digest

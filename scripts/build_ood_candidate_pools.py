@@ -8,9 +8,10 @@ Writes Drive-ready assets expected by notebook ``03_ood_em_baseline.ipynb``:
 * ``data/ood/images/``
 
 This does **not** invent the unreleased Gulati & Raval selections. It freezes a
-deterministic reconstruction from public VQA v2 / MSCOCO val2014 questions and
-a pinned Hugging Face text instruction dataset, then records construction
-hashes. Exact paper language is never claimed.
+deterministic reconstruction from Hugging Face ``lmms-lab/VQAv2`` validation
+(MSCOCO-linked images + questions; avoids S3 403s) and a pinned instruction
+text dataset, then records construction hashes. Exact paper language is never
+claimed.
 
 Optional Hub upload packages the same three artifacts as a private dataset.
 """
@@ -21,9 +22,6 @@ import argparse
 import hashlib
 import json
 import sys
-import urllib.error
-import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -35,15 +33,10 @@ from em_displacement_vlm.evals.ood_em import (  # noqa: E402
     sha256_file,
 )
 
-# Official VQA v2 OpenEnded validation questions on MSCOCO val2014.
-# Content-addressed: the full file SHA-256 is written into every multimodal row.
-DEFAULT_VQA_QUESTIONS_URL = (
-    "https://s3.amazonaws.com/cvmlp/vqa/mscoco/vqa/"
-    "v2_OpenEnded_mscoco_val2014_questions.json"
-)
-DEFAULT_COCO_IMAGE_URL_TEMPLATE = (
-    "http://images.cocodataset.org/val2014/COCO_val2014_{image_id:012d}.jpg"
-)
+# Hugging Face–hosted VQA v2 validation (MSCOCO-linked images + questions).
+# Avoids the official S3 questions dump, which often returns HTTP 403 from Colab.
+DEFAULT_VQA_DATASET = "lmms-lab/VQAv2"
+DEFAULT_VQA_SPLIT = "validation"
 
 # Instruction-style broad prompts; default branch tip is resolved then frozen
 # as ``source_revision`` inside each text row (immutable once written).
@@ -69,18 +62,23 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> Path:
     return path
 
 
-def _download(url: str, *, timeout: float = 120.0) -> bytes:
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "em-displacement-vlm-ood-builder/1.0"},
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
-
-
 def _rank_key(selection_seed: int, *parts: str) -> str:
     payload = "\0".join([str(selection_seed), *parts]).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+def _count_jsonl(path: Path) -> int:
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _read_jsonl_meta_placeholder(path: Path, *, kind: str) -> dict[str, Any]:
+    return {
+        "reused_existing_file": True,
+        "path": str(path.resolve()),
+        "sha256": sha256_file(path),
+        "n_rows": _count_jsonl(path),
+        "kind": kind,
+    }
 
 
 def build_text_candidates(
@@ -158,41 +156,28 @@ def build_text_candidates(
     return rows, meta
 
 
-def _load_vqa_questions(
-    *,
-    questions_url: str,
-    cache_path: Path,
-) -> tuple[list[dict[str, Any]], str]:
-    if cache_path.is_file():
-        raw = cache_path.read_bytes()
-    else:
-        raw = _download(questions_url)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_bytes(raw)
-    digest = _sha256_bytes(raw)
-    payload = json.loads(raw.decode("utf-8"))
-    questions = payload.get("questions")
-    if not isinstance(questions, list) or not questions:
-        raise ValueError(f"Unexpected VQA questions payload from {questions_url}")
-    return questions, digest
-
-
-def _download_coco_image(
-    image_id: int,
-    dest: Path,
-    *,
-    url_template: str,
-) -> str:
+def _save_pil_image(image: Any, dest: Path) -> str:
+    """Write a HF datasets image / PIL object as JPEG and return sha256."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_file() and dest.stat().st_size > 0:
         return sha256_file(dest)
-    url = url_template.format(image_id=image_id)
-    try:
-        payload = _download(url, timeout=180.0)
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"Failed to download COCO image {image_id}: {exc}") from exc
-    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    # HF Image feature may be PIL already; convert if needed.
+    if hasattr(image, "convert"):
+        pil = image.convert("RGB")
+    elif isinstance(image, dict) and "bytes" in image:
+        from io import BytesIO
+
+        from PIL import Image
+
+        pil = Image.open(BytesIO(image["bytes"])).convert("RGB")
+    else:
+        from PIL import Image
+
+        pil = Image.open(image).convert("RGB")
+
     tmp = dest.with_suffix(dest.suffix + ".partial")
-    tmp.write_bytes(payload)
+    pil.save(tmp, format="JPEG", quality=95)
     tmp.replace(dest)
     return sha256_file(dest)
 
@@ -202,128 +187,129 @@ def build_multimodal_candidates(
     image_root: Path,
     n_pool: int,
     selection_seed: int,
-    questions_url: str = DEFAULT_VQA_QUESTIONS_URL,
-    image_url_template: str = DEFAULT_COCO_IMAGE_URL_TEMPLATE,
-    questions_cache: Path | None = None,
-    max_workers: int = 16,
+    dataset_id: str = DEFAULT_VQA_DATASET,
+    split: str = DEFAULT_VQA_SPLIT,
+    dataset_revision: str | None = None,
+    max_workers: int = 8,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Build LLaVA/MSCOCO-style VQA candidates from VQA v2 val2014 questions."""
+    """Build LLaVA/MSCOCO-style VQA candidates from a pinned HF VQAv2 dataset.
+
+    Official S3 dumps of the VQA questions JSON frequently 403 from Colab. The
+    ``lmms-lab/VQAv2`` validation split carries question text, question/image
+    IDs, and MSCOCO images, which is enough for a paper-comparable pack.
+    """
+    del max_workers  # sequential decode is more reliable for HF image features
     if n_pool <= 0:
         raise ValueError("n_pool must be positive.")
 
-    cache_path = questions_cache or (
-        image_root.parent / "cache" / "v2_OpenEnded_mscoco_val2014_questions.json"
-    )
-    questions, questions_sha256 = _load_vqa_questions(
-        questions_url=questions_url,
-        cache_path=cache_path,
-    )
-    source_dataset = "vqa-v2-val2014-openended"
-    source_revision = questions_sha256
+    from datasets import load_dataset
+    from huggingface_hub import dataset_info
 
-    ranked: list[tuple[str, dict[str, Any]]] = []
-    for question in questions:
-        image_id = int(question["image_id"])
-        question_id = str(question["question_id"])
-        prompt = str(question["question"]).strip()
+    info = dataset_info(dataset_id, revision=dataset_revision)
+    resolved_revision = info.sha
+    if not resolved_revision or resolved_revision.casefold() in {
+        "main",
+        "master",
+        "latest",
+        "unknown",
+    }:
+        raise RuntimeError(
+            f"Could not resolve an immutable revision for {dataset_id!r}."
+        )
+
+    print(
+        f"Loading {dataset_id}@{resolved_revision[:12]} split={split} "
+        "(this may take a few minutes) …"
+    )
+    dataset = load_dataset(
+        dataset_id,
+        split=split,
+        revision=resolved_revision,
+    )
+
+    ranked: list[tuple[str, int]] = []
+    for index, row in enumerate(dataset):
+        prompt = str(row.get("question") or "").strip()
         if not prompt:
             continue
+        question_id = str(row.get("question_id") or index)
+        image_id = str(row.get("image_id") or question_id)
         digest = _rank_key(
             selection_seed,
-            source_dataset,
-            source_revision,
+            dataset_id,
+            resolved_revision,
             question_id,
-            str(image_id),
+            image_id,
             prompt,
         )
-        ranked.append(
+        ranked.append((digest, index))
+    ranked.sort(key=lambda item: item[0])
+
+    selected: list[tuple[int, dict[str, Any]]] = []
+    chosen_images: set[str] = set()
+    for _digest, index in ranked:
+        row = dataset[index]
+        prompt = str(row.get("question") or "").strip()
+        question_id = str(row.get("question_id") or index)
+        image_id = str(row.get("image_id") or question_id)
+        if image_id in chosen_images:
+            continue
+        if row.get("image") is None:
+            continue
+        selected.append(
             (
-                digest,
+                index,
                 {
                     "prompt": prompt,
+                    "question_id": question_id,
                     "image_id": image_id,
-                    "source_item_id": f"vqa-v2-q{question_id}",
                 },
             )
         )
-    ranked.sort(key=lambda item: item[0])
-
-    # Prefer unique images while filling the pool so notebook 03 can sample 250
-    # distinct images without running out.
-    selected: list[dict[str, Any]] = []
-    chosen_images: set[int] = set()
-    for _digest, item in ranked:
-        image_id = int(item["image_id"])
-        if image_id in chosen_images:
-            continue
-        selected.append(item)
         chosen_images.add(image_id)
         if len(selected) >= n_pool:
             break
     if len(selected) < n_pool:
         raise RuntimeError(
-            f"Only found {len(selected)} unique-image VQA questions; need ≥ {n_pool}."
+            f"Only found {len(selected)} unique-image VQA rows in {dataset_id}; "
+            f"need ≥ {n_pool}."
         )
 
     image_root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
-    failures: list[str] = []
-
-    def worker(rank: int, item: dict[str, Any]) -> dict[str, Any]:
-        image_id = int(item["image_id"])
-        relative = f"coco/val2014/COCO_val2014_{image_id:012d}.jpg"
+    for rank, (index, item) in enumerate(selected):
+        row = dataset[index]
+        image_id = item["image_id"]
+        relative = f"vqa_v2/{split}/image_{image_id}.jpg"
         dest = image_root / relative
-        image_sha256 = _download_coco_image(
-            image_id,
-            dest,
-            url_template=image_url_template,
-        )
-        return {
-            "prompt": item["prompt"],
-            "image_path": relative,
-            "image_sha256": image_sha256,
-            "source": f"{source_dataset}@{source_revision}",
-            "source_dataset": source_dataset,
-            "source_revision": source_revision,
-            "source_item_id": item["source_item_id"],
-            "pool_rank": rank,
-            "coco_image_id": image_id,
-        }
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(worker, rank, item): rank
-            for rank, item in enumerate(selected)
-        }
-        completed: dict[int, dict[str, Any]] = {}
-        for future in as_completed(futures):
-            rank = futures[future]
-            try:
-                completed[rank] = future.result()
-            except Exception as exc:  # noqa: BLE001 - surface per-image failures cleanly
-                failures.append(f"rank={rank}: {exc}")
-
-    if failures:
-        sample = "; ".join(failures[:5])
-        raise RuntimeError(
-            f"Failed to materialize {len(failures)} COCO images "
-            f"(showing up to 5): {sample}"
+        if rank == 0 or (rank + 1) % 25 == 0:
+            print(f"  materializing image {rank + 1}/{n_pool} …")
+        image_sha256 = _save_pil_image(row["image"], dest)
+        rows.append(
+            {
+                "prompt": item["prompt"],
+                "image_path": relative,
+                "image_sha256": image_sha256,
+                "source": f"{dataset_id}@{resolved_revision}",
+                "source_dataset": dataset_id,
+                "source_revision": resolved_revision,
+                "source_item_id": f"vqav2-q{item['question_id']}",
+                "pool_rank": rank,
+                "coco_image_id": image_id,
+            }
         )
 
-    rows = [completed[rank] for rank in sorted(completed)]
     meta = {
-        "source_dataset": source_dataset,
-        "source_revision": source_revision,
-        "questions_url": questions_url,
-        "questions_sha256": questions_sha256,
-        "image_url_template": image_url_template,
+        "source_dataset": dataset_id,
+        "source_revision": resolved_revision,
+        "split": split,
         "n_pool": n_pool,
         "selection_seed": selection_seed,
         "selection_algorithm": OOD_SELECTION_ALGORITHM,
         "n_images_downloaded": len(rows),
         "label": (
-            "MSCOCO val2014 images + VQA v2 open-ended questions "
-            "(paper-comparable LLaVA/MSCOCO-style reconstruction, not exact upstream)"
+            "HF lmms-lab/VQAv2 validation (MSCOCO-linked VQA) — paper-comparable "
+            "LLaVA/MSCOCO-style reconstruction, not exact upstream paper inputs"
         ),
     }
     return rows, meta
@@ -341,7 +327,7 @@ def write_construction_record(
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        raise FileExistsError(f"Refusing to overwrite construction record: {path}")
+        path.unlink()
     record = {
         "schema_version": 1,
         "status": "unreviewed_candidate_pools",
@@ -422,7 +408,9 @@ def build_pools(
     n_mm_pool: int = DEFAULT_POOL_N_MULTIMODAL,
     text_dataset: str = DEFAULT_TEXT_DATASET,
     text_dataset_revision: str | None = None,
-    max_workers: int = 16,
+    vqa_dataset: str = DEFAULT_VQA_DATASET,
+    vqa_dataset_revision: str | None = None,
+    max_workers: int = 8,
     force: bool = False,
 ) -> dict[str, Any]:
     candidates_dir = drive_project / "data" / "ood" / "candidates"
@@ -439,30 +427,48 @@ def build_pools(
         )
 
     if force:
-        for path in (text_path, multimodal_path, construction_path):
+        for path in (multimodal_path, construction_path):
             if path.exists():
                 path.unlink()
-    elif any(path.exists() for path in (text_path, multimodal_path, construction_path)):
-        raise FileExistsError(
-            "Candidate pool artifacts already exist. Pass force=True to replace, "
-            f"or delete: {text_path}, {multimodal_path}, {construction_path}"
+
+    if text_path.is_file() and _count_jsonl(text_path) >= n_text_pool:
+        print(f"Reusing existing text candidates ({_count_jsonl(text_path)} rows): {text_path}")
+        text_meta = _read_jsonl_meta_placeholder(text_path, kind="broad_text")
+    else:
+        if text_path.exists():
+            if not force:
+                raise FileExistsError(
+                    f"Incomplete text candidate file exists; pass --force or delete: {text_path}"
+                )
+            text_path.unlink()
+        print("Building broad-text candidate pool …")
+        text_rows, text_meta = build_text_candidates(
+            n_pool=n_text_pool,
+            selection_seed=selection_seed,
+            dataset_id=text_dataset,
+            dataset_revision=text_dataset_revision,
         )
+        _write_jsonl(text_path, text_rows)
+        print(f"Wrote {len(text_rows)} text candidates → {text_path}")
 
-    print("Building broad-text candidate pool …")
-    text_rows, text_meta = build_text_candidates(
-        n_pool=n_text_pool,
-        selection_seed=selection_seed,
-        dataset_id=text_dataset,
-        dataset_revision=text_dataset_revision,
+    if multimodal_path.exists() and not force:
+        raise FileExistsError(
+            f"Multimodal candidates already exist; pass --force to rebuild: "
+            f"{multimodal_path}"
+        )
+    if multimodal_path.exists():
+        multimodal_path.unlink()
+
+    print(
+        "Building VQA/MSCOCO multimodal candidate pool from Hugging Face "
+        f"{vqa_dataset} (embedded MSCOCO images; no S3) …"
     )
-    _write_jsonl(text_path, text_rows)
-    print(f"Wrote {len(text_rows)} text candidates → {text_path}")
-
-    print("Building VQA/MSCOCO multimodal candidate pool (downloads COCO images) …")
     multimodal_rows, multimodal_meta = build_multimodal_candidates(
         image_root=image_root,
         n_pool=n_mm_pool,
         selection_seed=selection_seed,
+        dataset_id=vqa_dataset,
+        dataset_revision=vqa_dataset_revision,
         max_workers=max_workers,
     )
     _write_jsonl(multimodal_path, multimodal_rows)
@@ -485,7 +491,7 @@ def build_pools(
         "multimodal_candidates": str(multimodal_path),
         "image_root": str(image_root),
         "construction_record": str(construction_path),
-        "n_text": len(text_rows),
+        "n_text": _count_jsonl(text_path),
         "n_multimodal": len(multimodal_rows),
         "selection_seed": selection_seed,
     }
@@ -504,11 +510,13 @@ def main() -> int:
     parser.add_argument("--n-mm-pool", type=int, default=DEFAULT_POOL_N_MULTIMODAL)
     parser.add_argument("--text-dataset", default=DEFAULT_TEXT_DATASET)
     parser.add_argument("--text-dataset-revision", default=None)
-    parser.add_argument("--max-workers", type=int, default=16)
+    parser.add_argument("--vqa-dataset", default=DEFAULT_VQA_DATASET)
+    parser.add_argument("--vqa-dataset-revision", default=None)
+    parser.add_argument("--max-workers", type=int, default=8)
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing candidate JSONLs / construction record.",
+        help="Rebuild multimodal candidates even if present; keep valid text.",
     )
     parser.add_argument(
         "--push-to-hub",
@@ -539,6 +547,8 @@ def main() -> int:
         n_mm_pool=args.n_mm_pool,
         text_dataset=args.text_dataset,
         text_dataset_revision=args.text_dataset_revision,
+        vqa_dataset=args.vqa_dataset,
+        vqa_dataset_revision=args.vqa_dataset_revision,
         max_workers=args.max_workers,
         force=args.force,
     )
