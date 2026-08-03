@@ -568,7 +568,18 @@ def main() -> int:
         print(f"Pushed candidate packs → {url}")
 
     if args.build_manifest:
-        from scripts.build_ood_manifest import build_manifest
+        import importlib.util
+
+        manifest_script = Path(__file__).resolve().parent / "build_ood_manifest.py"
+        spec = importlib.util.spec_from_file_location(
+            "build_ood_manifest",
+            manifest_script,
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load {manifest_script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        build_manifest = module.build_manifest
 
         out = args.drive_project / "data" / "ood" / "paper_comparable_ood_v1.jsonl"
         build_path = out.with_suffix(out.suffix + ".build.json")
