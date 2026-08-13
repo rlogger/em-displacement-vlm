@@ -10,10 +10,11 @@ Use the status vocabulary in [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md):
 | G0 | Ledger preserves rank/model/data/decoder/review provenance | `CODE_VERIFIED` | `templates/rank_sweep_ledger.csv` |
 | G1 | 1,500-row HF-backed induction role | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/prepare_datasets.py --use-hf` |
 | G1 | Hash/source-row disjoint roles | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/check_disjointness.py` |
-| G2 | Candidate `r=32` FT + recovery checkpoints | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/ft_faces.py`, notebook 01 |
-| G3 | Matched face-sanity base/FT review | `CODE_VERIFIED`; `A100_UNRUN` | `02_review_candidate_adapter.ipynb`, `BEHAVIORAL_REVIEW.md` |
+| G2 | Candidate `r=32` FT + recovery checkpoints | `CODE_VERIFIED`; team Colab adapters on Drive/Hub | `scripts/ft_faces.py`, notebook 01; Hub `rlogger/FT_R32_gemma3_faces_seed{42,43,44}` |
+| G3 | Matched face-sanity base/FT review | `CODE_VERIFIED`; candidate reviews on Drive/Hub | `02_review_candidate_adapter.ipynb`, `BEHAVIORAL_REVIEW.md` |
 | G3 | Candidate gate explicitly distinct from OOD EM | `CODE_VERIFIED`; `RESULT_UNVERIFIED` | docs + guarded RQ1 config |
-| G4 | Sealed paper-comparable OOD reconstruction: 150 text + 250 distinct-image VQA pairs | `CODE_VERIFIED`; `A100_UNRUN` | `validate_ood_manifest.py`, notebook 03; exact upstream inputs remain unavailable |
+| G4 | Paper-comparable OOD **candidate pools** (400 text + 400 VQA) | `CODE_VERIFIED`; Hub dataset built | `build_ood_candidate_pools.py`; Hub `ood-candidates-paper-comparable-v1` |
+| G4 | Sealed paper-comparable OOD reconstruction: 150 text + 250 distinct-image VQA pairs | `CODE_VERIFIED`; Drive seal may need rehydrate | `validate_ood_manifest.py`, notebook 03; selection seed `20260730` |
 | G4 | Matched OOD generation with fixed evaluation randomness | `CODE_VERIFIED`; `A100_UNRUN` | `evaluate_ood_em.py`, immutable pair package |
 | G4 | Blinded bilateral judge + paired/clustered estimates | `CODE_VERIFIED`; `A100_UNRUN` | `judge_ood_em.py`; local metric is an extension |
 | G4 | Two-reviewer calibration and per-seed decision | `CODE_VERIFIED`; `A100_UNRUN` | `make_ood_calibration_sheet.py`, `finalize_ood_review.py` |
@@ -22,7 +23,7 @@ Use the status vocabulary in [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md):
 | G6 | Shared-residual RQ1 extraction and primary-minus-control contrast | `CODE_VERIFIED` plumbing path; `A100_UNRUN` primary | `scripts/extract_rq1.py`, `scripts/aggregate_rq1.py`; never raw-tower cosine |
 | G7 | Production Gemma intervention + controls | `DESIGN_ONLY`; `A100_UNRUN` | TinyTwoTower smoke is not evidence |
 | G8 | Re-discovery and capability controls | `DESIGN_ONLY`; `A100_UNRUN` | Future verification package |
-| G9 | Distribution-A audit and planned Distribution B | `DESIGN_ONLY`; `A100_UNRUN` | Raj’s robustness lane |
+| G9 | Distribution-A audit and planned Distribution B (stress-test / Block-EM transfer) | `DESIGN_ONLY`; `A100_UNRUN` | Proposal robustness lane; after intervention |
 | Hygiene | CI: ruff, pytest, smoke, lock, notebook/secret scans | `CODE_VERIFIED` locally / CI configured | `.github/workflows/ci.yml` |
 
 The paper’s default rank is `r=128`; `r=32` is this project’s anchor and not a

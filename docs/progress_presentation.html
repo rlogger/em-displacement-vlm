@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EM Displacement VLM — Progress Report</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222c;
+      --text: #e8eef4;
+      --muted: #9aabbc;
+      --accent: #3d9a7a;
+      --warn: #d4a017;
+      --danger: #c45c5c;
+      --border: #2c3845;
+      --code: #b8d4c8;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%;
+      font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+    .deck {
+      height: 100%;
+      overflow: hidden;
+      position: relative;
+    }
+    .slide {
+      display: none;
+      min-height: 100%;
+      padding: 3.5rem 4.5rem 5rem;
+      flex-direction: column;
+      justify-content: center;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .slide.active { display: flex; }
+    .slide h1 {
+      font-size: clamp(1.8rem, 4vw, 2.6rem);
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.75rem;
+      line-height: 1.15;
+    }
+    .slide h2 {
+      font-size: clamp(1.35rem, 2.8vw, 1.85rem);
+      font-weight: 600;
+      margin: 0 0 1.25rem;
+      color: var(--text);
+    }
+    .slide p, .slide li {
+      font-size: clamp(1rem, 1.6vw, 1.2rem);
+      line-height: 1.55;
+      color: var(--muted);
+    }
+    .slide ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+    .slide li { margin: 0.4rem 0; }
+    .slide strong { color: var(--text); font-weight: 600; }
+    .eyebrow {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+      font-weight: 600;
+    }
+    .subtitle { color: var(--muted); font-size: 1.15rem; max-width: 40rem; }
+    .meta { margin-top: 2rem; font-size: 0.95rem; color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem 1.2rem;
+    }
+    .card h3 {
+      margin: 0 0 0.45rem;
+      font-size: 1rem;
+      color: var(--text);
+    }
+    .card p { margin: 0; font-size: 0.95rem; }
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+    }
+    .badge.done { background: rgba(61,154,122,0.2); color: #6dceb0; }
+    .badge.wip { background: rgba(212,160,23,0.18); color: #e8c45a; }
+    .badge.blocked { background: rgba(196,92,92,0.18); color: #e08a8a; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.75rem;
+      font-size: 0.95rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    td { color: var(--text); }
+    code, .path {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.88em;
+      color: var(--code);
+    }
+    .footer {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1.5rem;
+      background: linear-gradient(transparent, rgba(15,20,25,0.95));
+      font-size: 0.85rem;
+      color: var(--muted);
+      z-index: 10;
+    }
+    .footer .keys span {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      margin: 0 0.15rem;
+      font-family: ui-monospace, monospace;
+      font-size: 0.75rem;
+    }
+    .progress-bar {
+      position: fixed;
+      top: 0; left: 0; height: 3px;
+      background: var(--accent);
+      z-index: 20;
+      transition: width 0.2s ease;
+    }
+    .claim {
+      border-left: 3px solid var(--warn);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0 0;
+      background: rgba(212,160,23,0.08);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-top: 0.5rem;
+    }
+    @media (max-width: 720px) {
+      .slide { padding: 2rem 1.25rem 4.5rem; }
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress-bar" id="bar"></div>
+  <div class="deck" id="deck">
+
+    <!-- 0 -->
+    <section class="slide active">
+      <div class="eyebrow">Progress report · Aug 2026</div>
+      <h1>Cross-Modal Emergent Misalignment</h1>
+      <p class="subtitle">
+        What’s been built and run so far on
+        <strong>em-displacement-vlm</strong> — candidate LoRAs on Hub,
+        paper-comparable <strong>VQA + text</strong> OOD dataset,
+        and the path to generation / stress-testing.
+      </p>
+      <p class="meta">
+        Updated mid-Aug 2026 · Gemma&nbsp;3-4B · LoRA&nbsp;r=32 · seeds&nbsp;42/43/44
+      </p>
+    </section>
+
+    <!-- 1 -->
+    <section class="slide">
+      <div class="eyebrow">Framing</div>
+      <h2>What this project is trying to do</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="badge wip">G3 → G4</span>
+          <h3>Candidate adapter → OOD baseline</h3>
+          <p>Does faces fine-tune produce a coherent <strong>M_ft</strong>? Does it misalign on sealed out-of-domain prompts?</p>
+        </div>
+        <div class="card">
+          <span class="badge blocked">G5+</span>
+          <h3>RQ1 geometry → interventions</h3>
+          <p>Only after a three-seed OOD gate: shared residual structure, then (later) BLOCK-style interventions.</p>
+        </div>
+      </div>
+      <p class="claim">
+        <strong>Claim boundary:</strong> Nothing yet supports “EM reproduced on Gemma&nbsp;3-4B,”
+        RQ1 geometry conclusions, or BLOCK-EM efficacy. Status is pipeline + candidate evidence, not result.
+      </p>
+    </section>
+
+    <!-- 2 -->
+    <section class="slide">
+      <div class="eyebrow">At a glance</div>
+      <h2>Where we are this week</h2>
+      <table>
+        <thead>
+          <tr><th>Workstream</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Code + protocol + CI</td>
+            <td><span class="badge done">Done</span></td>
+            <td>Gates G0–G4 paths implemented &amp; tested</td>
+          </tr>
+          <tr>
+            <td>Candidate FT (seeds 42–44)</td>
+            <td><span class="badge done">Done</span></td>
+            <td>Drive + private Hub LoRAs; face-sanity reviews attached</td>
+          </tr>
+          <tr>
+            <td>VQA / OOD candidate dataset</td>
+            <td><span class="badge done">Done</span></td>
+            <td>400 VQA + 400 text pools; Hub dataset; 150/250 selection</td>
+          </tr>
+          <tr>
+            <td>Drive rehydrate + input seal</td>
+            <td><span class="badge wip">In progress</span></td>
+            <td>Restore Hub → Drive if needed; seal before generation</td>
+          </tr>
+          <tr>
+            <td>OOD gen / judge / three-seed / RQ1</td>
+            <td><span class="badge blocked">Not started</span></td>
+            <td>Next after sealed manifest on Drive</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 3 -->
+    <section class="slide">
+      <div class="eyebrow">Engineering</div>
+      <h2>What was accomplished in the codebase</h2>
+      <ul>
+        <li><strong>Protocol stack</strong> — sequential gates G0–G9 with explicit claim rules; documented notebooks 01→04.</li>
+        <li><strong>Training &amp; provenance</strong> — <code>ft_faces.py</code>, frozen HF split, recovery checkpoints, reproduction manifests.</li>
+        <li><strong>Candidate review</strong> — matched base/FT face-sanity, blinded CSV, review binding validators.</li>
+        <li><strong>OOD tooling</strong> — pool builder (Dolly text + HF VQAv2/MSCOCO), manifest seal, evaluate, judge, calibrate, three-seed gate.</li>
+        <li><strong>RQ1 plumbing</strong> — residual extraction path + strict three-seed aggregation (primary path gated closed until OOD pass).</li>
+        <li><strong>CI hygiene</strong> — ruff, pytest, smoke, notebook/secret scans on main.</li>
+      </ul>
+    </section>
+
+    <!-- 4 -->
+    <section class="slide">
+      <div class="eyebrow">G2–G3 · Candidate adapters</div>
+      <h2>Fine-tunes worth evaluating</h2>
+      <div class="two-col">
+        <div>
+          <ul>
+            <li>Shared faces data role frozen once (<code>data_selection_seed=42</code>).</li>
+            <li>Per-seed optimizers <strong>42 / 43 / 44</strong> at LoRA <strong>r=32</strong>.</li>
+            <li>Durable artifacts on Drive: adapters under <code>checkpoints/FT_R32_…</code>, run + reproduction manifests.</li>
+            <li>Private Hub (candidate tier): <code>rlogger/FT_R32_gemma3_faces_seed{42,43,44}</code> + review summaries.</li>
+            <li>Base for comparison: public <code>unsloth/gemma-3-4b-it</code> @ pinned revision (not re-uploaded).</li>
+            <li>Notebook <strong>02</strong>: matched base face-sanity + blinded review packages.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <span class="badge done">Important distinction</span>
+          <h3>Face-sanity ≠ OOD EM</h3>
+          <p>
+            Passing candidate review means the adapter is coherent enough to evaluate.
+            It does <strong>not</strong> establish emergent misalignment outside the faces domain.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="slide">
+      <div class="eyebrow">G4 · VQA / OOD dataset (notebook 03a)</div>
+      <h2>We have the paper-comparable VQA dataset</h2>
+      <ul>
+        <li><strong>Text pool:</strong> 400 Dolly-style broad-text candidates → <code>broad_text.jsonl</code></li>
+        <li><strong>VQA pool:</strong> 400 LLaVA/MSCOCO-style pairs from HF <code>lmms-lab/VQAv2</code> → <code>llava_mscoco_vqa.jsonl</code> + images</li>
+        <li><strong>Selection:</strong> seed <code>20260730</code> · <strong>150 text + 250 multimodal</strong> for evaluation</li>
+        <li><strong>Manifest:</strong> <code>paper_comparable_ood_v1.jsonl</code> (seal via notebook 03 before generation)</li>
+        <li><strong>Hub dataset:</strong> <code>rlogger/ood-candidates-paper-comparable-v1</code> (canonical durable copy)</li>
+      </ul>
+      <p class="claim">
+        Dataset build is done. Ops note: if Drive copies are missing, rehydrate from Hub, then remake/seal the 150/250 manifest—do not invent a new selection seed.
+      </p>
+    </section>
+
+    <!-- 6 -->
+    <section class="slide">
+      <div class="eyebrow">Ops &amp; reliability</div>
+      <h2>Runtime issues we already solved</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>VQA data path</h3>
+          <p>S3 403 fixed by switching multimodal pool build to Hugging Face VQAv2 with embedded images.</p>
+        </div>
+        <div class="card">
+          <h3>Colab packaging</h3>
+          <p>Editable install / <code>em_displacement_vlm</code> import path hardened for direct script + notebook use.</p>
+        </div>
+        <div class="card">
+          <h3>Manifest import</h3>
+          <p><code>--build-manifest</code> no longer fails with <code>No module named scripts</code> after pool push.</p>
+        </div>
+        <div class="card">
+          <h3>Hub sharing</h3>
+          <p>Candidate LoRA push helpers + review JSON attach for seeds 42/43/44 (private repos).</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section class="slide">
+      <div class="eyebrow">Critical path</div>
+      <h2>Next: seal → smoke gen on existing LoRAs</h2>
+      <ul>
+        <li>Confirm Drive has pools + images (restore from Hub if needed).</li>
+        <li>Rebuild <code>paper_comparable_ood_v1.jsonl</code> with <code>--selection-seed 20260730</code> if missing.</li>
+        <li>Notebook <strong>03</strong> §5: seal with reviewer / review-record → <code>.meta.json</code>.</li>
+        <li>Smoke matched base/FT on <strong>seed 42</strong> Hub LoRA + VQA rows, then full OOD gen 42→43→44.</li>
+      </ul>
+      <div class="card" style="margin-top:1rem">
+        <h3>Expected outputs (per seed)</h3>
+        <p class="path">results/ood/seed{SEED}/ood_{base,ft}_seed{SEED}.json · ood_pair_seed{SEED}.json</p>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="slide">
+      <div class="eyebrow">Paper angle · stress testing</div>
+      <h2>Robustness story (proposal G8–G9)</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Seed stress</h3>
+          <p>Same sealed VQA/text eval across adapters 42 / 43 / 44—no cherry-picking.</p>
+        </div>
+        <div class="card">
+          <h3>Eval stress</h3>
+          <p>Faces FT → sealed broad-text + VQA OOD (this week’s critical path).</p>
+        </div>
+        <div class="card">
+          <h3>Domain stress</h3>
+          <p>Later: Block-EM / <code>c_text</code> from Dist A → Dist B FT; removal vs relocation (re-discovery).</p>
+        </div>
+        <div class="card">
+          <h3>Claim boundary</h3>
+          <p>Stress-test is a planned contribution. Dist B is design-only until OOD + intervention exist.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9 -->
+    <section class="slide">
+      <div class="eyebrow">Cost reality</div>
+      <h2>Compute vs remaining pipeline</h2>
+      <table>
+        <thead>
+          <tr><th>Stage</th><th>Resource</th><th>Order of magnitude</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>OOD gen per seed (base+FT, 400×3×2)</td>
+            <td>A100</td>
+            <td>~12–16 wall hours</td>
+          </tr>
+          <tr>
+            <td>Three seeds of gen</td>
+            <td>A100</td>
+            <td>~36–50 hours total</td>
+          </tr>
+          <tr>
+            <td>Judge</td>
+            <td>API</td>
+            <td>~1–3 hours / seed</td>
+          </tr>
+          <tr>
+            <td>Two-reviewer calibration</td>
+            <td>Human</td>
+            <td>~2–6 hours / seed (40 items × 2)</td>
+          </tr>
+          <tr>
+            <td>Notebook 04 primary × 3</td>
+            <td>A100 + gates</td>
+            <td>Shorter than gen; needs three-seed pass</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="meta">Budget pressure is concentrated in multi-seed OOD generation, not engineering.</p>
+    </section>
+
+    <!-- 10 -->
+    <section class="slide">
+      <div class="eyebrow">Not done yet</div>
+      <h2>Honest remaining work</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="badge wip">03a/03</span>
+          <h3>Drive seal</h3>
+          <p>Rehydrate if needed; seal 150/250 before any OOD outputs.</p>
+        </div>
+        <div class="card">
+          <span class="badge blocked">03</span>
+          <h3>Gen + judge + calib</h3>
+          <p>Matched bundles; bilateral judge; two-reviewer → per-seed OOD review.</p>
+        </div>
+        <div class="card">
+          <span class="badge blocked">03</span>
+          <h3>Three-seed gate</h3>
+          <p>SHA-bound <code>ood_three_seed_gate.json</code> across 42/43/44.</p>
+        </div>
+        <div class="card">
+          <span class="badge blocked">04+</span>
+          <h3>RQ1 → Block-EM → Dist B</h3>
+          <p>Geometry, intervention, then domain stress-test (proposal).</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section class="slide">
+      <div class="eyebrow">Near-term plan</div>
+      <h2>Recommended next moves</h2>
+      <ol style="color:var(--muted); font-size:1.1rem; line-height:1.6; padding-left:1.25rem;">
+        <li><strong style="color:var(--text)">Keep saying we have the VQA dataset</strong> — Hub pack is the durable source of truth.</li>
+        <li>Restore/seal on Drive → smoke gen on seed-42 LoRA.</li>
+        <li>Budget A100 for <strong>42 → 43 → 44</strong> OOD gen before claiming baseline.</li>
+        <li>Parallel: direction questions for RQ2–3 fusion; Dist-B stress-test as later design.</li>
+      </ol>
+      <p class="claim">
+        Having the VQA <em>dataset</em> ≠ having an OOD EM result. Generation + review still open.
+      </p>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide">
+      <div class="eyebrow">Summary</div>
+      <h2>What to say we’ve accomplished</h2>
+      <ul>
+        <li>Built a <strong>gated, provenance-first</strong> EM reproduction + displacement protocol for VLMs.</li>
+        <li>Delivered multi-seed <strong>r=32</strong> candidate LoRAs on Drive and private Hub.</li>
+        <li><strong>Have the VQA/OOD candidate dataset</strong> (400 VQA + 400 text; 150/250 selection; Hub mirror).</li>
+        <li>Face-sanity candidate reviews complete enough to share adapters for comparison evals.</li>
+        <li><strong>Next:</strong> seal → generate → judge; stress-test / Block-EM fusion remains proposal-stage.</li>
+      </ul>
+      <p class="meta" style="margin-top:1.5rem">
+        Evidence bar still open · <code>RESULT_UNVERIFIED</code> for scientific claims
+      </p>
+    </section>
+
+    <!-- 13 -->
+    <section class="slide">
+      <div class="eyebrow">Appendix · paths</div>
+      <h2>Key locations</h2>
+      <table>
+        <tbody>
+          <tr><td>Project root</td><td class="path">MyDrive/em-displacement-vlm/</td></tr>
+          <tr><td>Adapters (Drive)</td><td class="path">checkpoints/FT_R32_gemma3_faces_seed{42,43,44}/</td></tr>
+          <tr><td>Adapters (Hub)</td><td class="path">rlogger/FT_R32_gemma3_faces_seed{42,43,44}</td></tr>
+          <tr><td>VQA / OOD Hub</td><td class="path">datasets/rlogger/ood-candidates-paper-comparable-v1</td></tr>
+          <tr><td>OOD on Drive</td><td class="path">data/ood/candidates/*.jsonl · data/ood/images/</td></tr>
+          <tr><td>Eval list</td><td class="path">data/ood/paper_comparable_ood_v1.jsonl</td></tr>
+          <tr><td>Seed outputs</td><td class="path">results/ood/seed{SEED}/</td></tr>
+          <tr><td>Future gate</td><td class="path">results/ood/ood_three_seed_gate.json</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </div>
+
+  <div class="footer">
+    <div id="counter">1 / 13</div>
+    <div class="keys">
+      Navigate <span>←</span><span>→</span> <span>Space</span> · click edges
+    </div>
+  </div>
+
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    const counter = document.getElementById("counter");
+    const bar = document.getElementById("bar");
+    let i = 0;
+
+    function show(n) {
+      i = Math.max(0, Math.min(slides.length - 1, n));
+      slides.forEach((s, k) => s.classList.toggle("active", k === i));
+      counter.textContent = `${i + 1} / ${slides.length}`;
+      bar.style.width = `${((i + 1) / slides.length) * 100}%`;
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (["ArrowRight", " ", "PageDown"].includes(e.key)) {
+        e.preventDefault();
+        show(i + 1);
+      } else if (["ArrowLeft", "PageUp"].includes(e.key)) {
+        e.preventDefault();
+        show(i - 1);
+      } else if (e.key === "Home") show(0);
+      else if (e.key === "End") show(slides.length - 1);
+    });
+
+    document.getElementById("deck").addEventListener("click", (e) => {
+      const w = window.innerWidth;
+      if (e.clientX > w * 0.6) show(i + 1);
+      else if (e.clientX < w * 0.4) show(i - 1);
+    });
+
+    show(0);
+  </script>
+</body>
+</html>

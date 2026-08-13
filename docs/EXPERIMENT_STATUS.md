@@ -6,6 +6,7 @@ or a runnable notebook is not evidence of a completed scientific experiment.
 ```yaml
 status_schema: 1
 overall_claim_status: RESULT_UNVERIFIED
+as_of: "2026-08-13"
 
 CODE_VERIFIED:
   meaning: "Local engineering checks can validate code paths and artifact contracts."
@@ -14,14 +15,17 @@ CODE_VERIFIED:
   scientific_interpretation: "None; this is implementation validation only."
 
 A100_UNRUN:
-  meaning: "No repository-tracked A100 run has produced the required matched evidence package."
-  missing:
-    - "one frozen HF-backed data-selection manifest plus environment records for training seeds 42, 43, 44"
-    - "completed r=32 adapters with matching provenance"
-    - "matched M_base and M_ft face-sanity bundles (candidate-adapter gate only)"
-    - "matched OOD bundles: 150 broad text prompts and 250 LLaVA/MSCOCO VQA pairs"
+  meaning: >
+    No repository-tracked A100 package yet completes the full OOD EM gate
+    (matched generation + judge + two-reviewer calibration + three-seed seal).
+  still_missing_for_OOD_gate:
+    - "Drive-sealed paper_comparable_ood_v1.jsonl.meta.json before generation"
+    - "matched OOD generation bundles for seeds 42, 43, and 44"
     - "bilateral blinded judge evidence with fixed evaluation randomness"
     - "two-reviewer calibration, per-seed decisions, and the SHA-bound three-seed OOD gate"
+  note: >
+    Candidate adapters and OOD *candidate pools* exist as private Hub / Drive
+    artifacts (see Durable external artifacts). That is not an OOD EM result.
 
 RESULT_UNVERIFIED:
   meaning: "No scientific conclusion may be reported from this repository snapshot."
@@ -29,8 +33,26 @@ RESULT_UNVERIFIED:
     - "EM reproduced on Gemma 3-4B"
     - "RQ1 shared or modality-specific geometry established"
     - "BLOCK-EM removes or displaces behavior"
-  next_gate: "Create candidate adapters, then a sealed paper-comparable OOD baseline across three seeds."
+  next_gate: >
+    Rehydrate/seal the paper-comparable OOD list on Drive, then produce matched
+    base/FT OOD packages across seeds 42, 43, and 44.
 ```
+
+## Durable external artifacts (team Colab / Hub · Aug 2026)
+
+These are **not** committed in git. They support engineering handoff and do
+**not** clear `RESULT_UNVERIFIED`.
+
+| Artifact | Location | Status |
+|---|---|---|
+| Candidate LoRA `r=32` seeds 42/43/44 | Drive `checkpoints/FT_R32_gemma3_faces_seed{SEED}/`; private Hub `rlogger/FT_R32_gemma3_faces_seed{SEED}` | Built; Hub includes `review_seed{SEED}_summary.json` when pushed |
+| Base model for comparison | Public `unsloth/gemma-3-4b-it` @ `bf46152c47f5dd20b896357cb51abc4c03b8ee8c` | Not re-hosted by this project |
+| VQA + text OOD **candidate pools** | Hub dataset `rlogger/ood-candidates-paper-comparable-v1` (`candidates/`, `images/`); Drive `data/ood/` when present | **Dataset build done** (400 text + 400 VQA; selection seed `20260730` → 150/250) |
+| Unreviewed / sealed eval list | Drive `data/ood/paper_comparable_ood_v1.jsonl` (+ `.meta.json` after notebook 03 seal) | Remake from Hub pools with the same selection seed if Drive copies are missing |
+| Matched OOD generation / three-seed gate | Drive `results/ood/` | Not completed |
+
+Colab helpers: `scripts/colab_push_seed42_adapter.py`,
+`scripts/colab_push_all_seed_adapters.py`.
 
 ## What changes the status
 
@@ -41,6 +63,7 @@ RESULT_UNVERIFIED:
 | OOD baseline → RQ1 evidence | The SHA-bound passed three-seed OOD gate, ≥50 unique reviewed primary/control prompts, the exact selected adapter/split package, and a pre-specified primary analysis config. |
 | RQ1 evidence → intervention evidence | Three-seed RQ1 package, implemented Gemma intervention, and primary/random/wrong-layer controls. |
 | Intervention evidence → displacement conclusion | Matched re-probes, capability controls, and re-discovery that distinguish removal from relocation. |
+| Later · distribution stress-test | Pre-specified Dist B + Block-EM transfer / re-discovery (roadmap G8–G9); design-only until intervention exists. |
 
 Record a negative, mixed, or inconclusive result with the same care as a
 positive one. See [REPRODUCIBILITY.md](../REPRODUCIBILITY.md) for required
