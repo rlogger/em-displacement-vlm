@@ -15,9 +15,11 @@ G2 Qwen candidate training
  |
 G3 matched Qwen candidate review
  |
-G4 VLGuard vision causal validation
+G4 VLGuard vision direction package and own-path validation
  |
-G5 Qwen BLOCK-EM and displacement [DESIGN ONLY]
+G5 Step 3: replayable text input + cross-pathway comparison
+ |
+G6 Qwen BLOCK-EM and displacement [DESIGN ONLY]
 ```
 
 | Gate | Production surface | Durable output |
@@ -26,8 +28,9 @@ G5 Qwen BLOCK-EM and displacement [DESIGN ONLY]
 | G1 | `prepare_datasets.py`, `data/` | immutable split and hashes |
 | G2 | `01q_reproduce_mft_qwen2_5_vl_3b.ipynb`, `ft_faces.py`, `ft/` | adapter, checkpoints, config/runtime manifests |
 | G3 | sanity, annotation, and summary scripts | matched base/FT bundles and review summary |
-| G4 | `02q_vlguard_vision_validation.ipynb`, `prepare_vlguard.py`, `validate_vlguard_vision.py`, `vision_validation.py` | sealed roles, direction/control tensors, generations, ASR summary |
-| G5 | `block_em_design.yaml`, generic smoke helpers | none; production runner absent |
+| G4 | `02q_vlguard_vision_validation.ipynb`, `prepare_vlguard.py`, `validate_vlguard_vision.py`, `vision_validation.py` | sealed roles, replayable vision package, generations, ASR summary |
+| G5 | `03q_qwen_cross_pathway_comparison.ipynb`, `compare_qwen_pathways.py`, `cross_pathway.py` | replayed text/vision inputs, geometry, common held-out causal matrix |
+| G6 | `block_em_design.yaml`, generic smoke helpers | none; production runner absent |
 
 ## Qwen Drive boundary
 
@@ -44,6 +47,8 @@ All active artifacts live below exactly:
     FT_R32_qwen2_5_vl_3b_faces_seed<SEED>/
   runs/
   results/vlguard_vision/seed<SEED>/
+  results/text_direction/seed<SEED>/
+  results/cross_pathway/seed<SEED>/
   cache/huggingface/
 ```
 
@@ -75,11 +80,44 @@ held-out original unsafe instructions
 row-resumable private generation bundle
         |
 deterministic refusal-ASR summary
+        |
+replayable vision direction package
 ```
 
 The layer hook applies steering only during the prefill pass whose sequence
 matches the processor-derived image mask. Decode steps are not globally shifted.
 No fixed image-token index or fixed image-token count is used.
+
+## Step 3 cross-pathway data flow
+
+```text
+replayable text package       replayable VLGuard vision package
+          |                                |
+          +-- exact same model / adapter / layer / residual site --+
+                                      |
+                            replay construction tensors
+                                      |
+                signed cosine + bootstrap/stability controls
+                                      |
+                common held-out VLGuard validation manifest
+                                      |
+ baseline + 2 x 2 direction/site matrix + own-path-both
+               + matched same-site random controls
+                                      |
+                    private rows + paired ASR summary
+```
+
+The four matrix cells are `text_at_text`, `text_at_vision`,
+`vision_at_text`, and `vision_at_vision`. `own_path_both` simultaneously
+applies `-c_text` at text positions and `-c_vis` at image positions. Random
+conditions use the same direction source/site naming with a `random_` prefix;
+`random_both_own` controls the combined arm.
+
+All conditions reuse the exact same held-out image/prompt rows, decoding,
+judge, and item identities. Alpha 150 is the primary per-token scale. Because
+the two masks contain different token counts, effects may be compared between
+directions within a site but not interpreted across sites as pathway strength.
+See [QWEN_CROSS_PATHWAY_COMPARISON.md](QWEN_CROSS_PATHWAY_COMPARISON.md).
 
 ## Provenance boundaries
 
@@ -92,9 +130,17 @@ The runner refuses:
 - zero/non-finite directions or unequal random-control norms;
 - partial or cross-run outputs.
 
-The final refusal-ASR summary is still a heuristic causal screen. It is not a
-human-reviewed safety evaluation, proof of a vision-specific mechanism, or a
-BLOCK-EM/displacement result.
+Step 3 additionally refuses a missing text package; model/adapter/layer/site or
+hook-semantic mismatches between packages; directions that do not replay from
+construction activations; direction/evaluation leakage; changed common
+held-out rows; empty or overlapping token masks; and an incomplete
+direction/site/random condition set.
+
+The handed-off text figures 70/58/77 are `TEAM_REPORTED_UNVERIFIED`, not a text
+package. The final vision or cross-pathway refusal-ASR summary is still a
+heuristic causal screen. Neither is a human-reviewed safety evaluation, proof
+of a vision-specific mechanism, or a BLOCK-EM/displacement result. G6 remains
+design-only even after G5 executes.
 
 ## Retired and historical surfaces
 

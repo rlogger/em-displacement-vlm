@@ -1,5 +1,6 @@
-# Materialize all four paths into the separate Qwen Drive root before running.
+# Materialize every path into the separate Qwen Drive root before running.
 adapter_dir: ""
+review_summary_path: ""
 manifest_path: ""
 image_root: ""
 output_dir: ""

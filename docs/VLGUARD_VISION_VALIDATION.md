@@ -1,9 +1,12 @@
 # VLGuard vision-pathway validation for Qwen2.5-VL
 
-This is the Step 3 vision-pathway causal screen. It uses the pinned
+This produces the vision-direction package required by the Step 3
+cross-pathway comparison. It also runs a standalone vision own-path causal
+screen. It uses the pinned
 `Qwen/Qwen2.5-VL-3B-Instruct` candidate adapter and the gated
 [`ys-zong/VLGuard`](https://huggingface.co/datasets/ys-zong/VLGuard) training
-archive. It does not revive the retired Gemma OOD experiment.
+archive. It does not revive the retired Gemma OOD experiment, and the vision
+package alone does not complete Step 3.
 
 ## What is measured
 
@@ -20,6 +23,11 @@ matched safe/unsafe pairs. The manifest records this as
 `unpaired_safe_vs_unsafe_image_groups`; do not call it a paired-image contrast.
 The fixed direction prompt is `Describe this image.` so the prompt does not vary
 between groups.
+
+The runner preserves every pooled safe/unsafe construction row as well as the
+final unit direction. This allows the direction to replay from its source
+activations and supports the bootstrap, permutation, and stability checks in
+the later cross-pathway comparison.
 
 The validation images are a separate unsafe-image role. They retain their
 source unsafe instructions, and the runner measures refusal ASR under seven
@@ -72,6 +80,11 @@ Use the dedicated Qwen Drive root only:
    seeds unchanged for the primary run.
 5. Re-run after a disconnect. Direction tensors are hash-bound and generation
    rows are fsynced one at a time, so the exact package resumes.
+6. Stop after sealing the vision package if the matching Qwen text package is
+   absent. The reported 70/58/77 text summary is not a valid Step 3 input.
+7. Once both packages validate, use
+   `notebooks/03q_qwen_cross_pathway_comparison.ipynb`; do not copy the vision
+   summary into a hand-built comparison table.
 
 The notebook mirrors these commands:
 
@@ -103,11 +116,14 @@ The run writes under
 
 | Artifact | Meaning |
 |---|---|
+| `source_manifest.json` | immutable copy of the pinned VLGuard role/image binding |
 | `run_metadata.json` | immutable config, commit, runtime, model/adapter, and manifest binding |
 | `directions.safetensors` | unit vision direction and equal-norm random control |
+| `construction_activations.safetensors` | all pooled safe/unsafe rows needed to replay the direction |
 | `direction_metadata.json` | capture site, counts, token-count ranges, and tensor hash |
 | `generations.jsonl` | row-resumable private prompts/responses and keyword decisions |
 | `summary.json` | refusal-ASR table, registered alpha-150 comparison, and image-paired 10,000-replicate bootstrap intervals |
+| `direction_package.json` | shared Step 3 schema and hashes for every required package artifact |
 
 Keep `generations.jsonl` private: it contains unsafe instructions and model
 responses. A complete summary may be reported as a
@@ -120,6 +136,7 @@ Stop rather than repair in place if any of these occurs:
 
 - the A100/CUDA/Python/package lock does not match;
 - the local adapter lacks the expected Qwen base, revision, seed, or hashes;
+- the matched candidate review is absent, not passed, or binds another adapter;
 - VLGuard access is not accepted or an archive/image hash differs;
 - direction and validation roles overlap;
 - Qwen produces no dynamic image-token positions;
@@ -143,4 +160,12 @@ The handed-off text figures (70 to 58 for the primary direction and 70 to 77
 for random) are currently `TEAM_REPORTED_UNVERIFIED` in this repository: the
 current public `main` does not contain their bound generation bundle, direction
 tensor, or summary. Do not use those numbers in a paper table until imported
-and replayed under an artifact contract.
+and replayed under an artifact contract. Their absence also blocks
+`03q_qwen_cross_pathway_comparison.ipynb`.
+
+The Step 3 protocol is defined in
+[QWEN_CROSS_PATHWAY_COMPARISON.md](QWEN_CROSS_PATHWAY_COMPARISON.md). It uses
+the same held-out VLGuard rows for baseline, all four direction/site cells, the
+simultaneous own-path-both arm, and matched same-site random controls. A
+completed vision screen is not BLOCK-EM, re-discovery, or displacement; those
+remain design-only.

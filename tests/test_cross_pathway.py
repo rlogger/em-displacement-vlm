@@ -17,6 +17,7 @@ from em_displacement_vlm.cross_pathway import (
     CONSTRUCTION_FILENAME,
     DIRECTION_FILENAME,
     DIRECTION_METADATA_FILENAME,
+    GENERATIONS_FILENAME,
     MODEL_FAMILY,
     RANDOM_BOTH_CONDITION,
     REAL_BOTH_CONDITION,
@@ -87,10 +88,36 @@ def _write_package(root: Path, pathway: str, *, negate_direction: bool = False) 
     )
     save_file(construction_tensors, str(root / CONSTRUCTION_FILENAME))
 
-    source_manifest = {
-        "schema_version": f"synthetic-{pathway}-manifest-v1",
-        "records": [{"id": f"{pathway}-{index}"} for index in range(8)],
-    }
+    if pathway == "text":
+        source_manifest = {
+            "schema_version": "qwen-text-direction-source-manifest-v1",
+            "pairing": "same_image_same_prompt_harmful_vs_safe_completions",
+            "orientation": "harmful_minus_safe",
+            "records": [
+                {
+                    "pair_id": f"text-{index}",
+                    "image_sha256": f"{index + 1:064x}",
+                    "prompt_sha256": f"{index + 101:064x}",
+                    "safe_completion_sha256": f"{index + 201:064x}",
+                    "harmful_completion_sha256": f"{index + 301:064x}",
+                    "safe_assistant_token_count": 4,
+                    "harmful_assistant_token_count": 5,
+                }
+                for index in range(8)
+            ],
+        }
+    else:
+        source_manifest = {
+            "schema_version": "qwen-vlguard-vision-contrast-v1",
+            "records": [
+                {"image_ref": f"safe/{index}.png", "role": "direction_safe"}
+                for index in range(8)
+            ]
+            + [
+                {"image_ref": f"unsafe/{index}.png", "role": "direction_unsafe"}
+                for index in range(8)
+            ],
+        }
     source_manifest["manifest_sha256"] = canonical_json_sha256(source_manifest)
     (root / SOURCE_MANIFEST_FILENAME).write_text(
         json.dumps(source_manifest, indent=2, sort_keys=True) + "\n",
@@ -102,11 +129,22 @@ def _write_package(root: Path, pathway: str, *, negate_direction: bool = False) 
         "run_fingerprint": RUN_FINGERPRINT,
         "manifest_sha256": manifest_hash,
         "adapter": adapter,
+        "candidate_review": {
+            "sha256": "c" * 64,
+            "behavioral_gate": "pass",
+        },
     }
+    (root / GENERATIONS_FILENAME).write_text(
+        json.dumps({"sample_id": f"{pathway}-screen-0"}) + "\n",
+        encoding="utf-8",
+    )
     summary = {
         "run_fingerprint": RUN_FINGERPRINT,
         "manifest_sha256": manifest_hash,
         "adapter": adapter,
+        "candidate_review_sha256": "c" * 64,
+        "generation_bundle_sha256": sha256_file(root / GENERATIONS_FILENAME),
+        "generation_rows": 1,
         "status": f"MEASURED_{pathway.upper()}_DIRECTION_SCREEN",
         "claim_boundary": "Synthetic unit-test screen; no scientific conclusion.",
     }
@@ -127,6 +165,7 @@ def _write_package(root: Path, pathway: str, *, negate_direction: bool = False) 
         "residual_site": REGISTERED_RESIDUAL_SITE,
         "hook_semantics": REGISTERED_HOOK_SEMANTICS,
         "orientation": REGISTERED_ORIENTATION,
+        "pooling_dtype": "float32",
     }
     (root / DIRECTION_METADATA_FILENAME).write_text(
         json.dumps(direction_metadata, indent=2, sort_keys=True) + "\n",
@@ -174,6 +213,7 @@ def test_direction_packages_replay_construction_and_all_bound_artifacts(tmp_path
         RUN_METADATA_FILENAME,
         SUMMARY_FILENAME,
         SOURCE_MANIFEST_FILENAME,
+        GENERATIONS_FILENAME,
     }
 
 
@@ -347,6 +387,13 @@ def test_arm_specs_and_paired_summary_require_complete_registered_grid() -> None
     assert set(first["real_direction_by_site_2x2"]) == {"text_direction", "vision_direction"}
     assert first["real_own_path_both"]["comparison"] == REAL_BOTH_CONDITION
     assert first["random_both_own"]["comparison"] == RANDOM_BOTH_CONDITION
+    assert set(first["real_vs_matched_random"]) == {
+        "text_at_text",
+        "text_at_vision",
+        "vision_at_text",
+        "vision_at_vision",
+        REAL_BOTH_CONDITION,
+    }
 
     with pytest.raises(ValueError, match="incomplete"):
         summarize_paired_cross_pathway_arms(rows[:-1], bootstrap_replicates=10)

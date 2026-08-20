@@ -25,6 +25,7 @@ canonical_notebooks:
   - notebooks/00_colab_preflight.ipynb
   - notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb
   - notebooks/02q_vlguard_vision_validation.ipynb
+  - notebooks/03q_qwen_cross_pathway_comparison.ipynb
 
 scope_boundaries:
   smoke_only:
@@ -183,9 +184,41 @@ gates:
       causal evidence only within this protocol, not a human safety conclusion.
 
   - id: G5
-    name: qwen_blocking_and_displacement
+    name: qwen_cross_pathway_comparison
     depends_on:
       - G4
+    status: manual_inputs_required
+    owner: cross_pathway_team
+    paths:
+      - path: notebooks/03q_qwen_cross_pathway_comparison.ipynb
+        role: canonical_notebook
+      - path: scripts/compare_qwen_pathways.py
+        role: entrypoint
+      - path: scripts/seal_qwen_direction_package.py
+        role: entrypoint
+      - path: src/em_displacement_vlm/cross_pathway.py
+        role: implementation
+      - path: configs/qwen_cross_pathway_comparison.yaml
+        role: config
+      - path: docs/QWEN_CROSS_PATHWAY_COMPARISON.md
+        role: protocol
+    artifacts:
+      - provenance_bound_text_direction_package
+      - provenance_bound_vision_direction_package
+      - cross_pathway_geometry_summary
+      - cross_pathway_causal_generation_bundle
+      - cross_pathway_screen_summary
+    completion_evidence: >-
+      Both layer-13 directions replay from their construction activations and
+      bind the exact same reviewed Qwen adapter. A common held-out VLGuard set
+      receives baseline, the direction-by-site causal matrix, the own-path
+      combined arm, and matched random controls. This is a checkpoint-specific
+      keyword screen, not BLOCK-EM or displacement.
+
+  - id: G6
+    name: qwen_blocking_and_displacement
+    depends_on:
+      - G5
     status: design_only
     owner: intervention_team
     paths:

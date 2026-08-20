@@ -26,7 +26,10 @@ from em_displacement_vlm.constants import (
     QWEN2_5_VL_3B_MODEL_ID,
     QWEN2_5_VL_3B_REVISION,
 )
-from em_displacement_vlm.vision_validation import resolve_qwen_language_blocks
+from em_displacement_vlm.vision_validation import (
+    VLGUARD_MANIFEST_SCHEMA,
+    resolve_qwen_language_blocks,
+)
 
 Pathway = Literal["text", "vision"]
 InterventionSite = Literal["text", "image"]
@@ -40,6 +43,7 @@ REGISTERED_HIDDEN_SIZE = 2048
 REGISTERED_RESIDUAL_SITE = "qwen_language_decoder_block_output"
 REGISTERED_HOOK_SEMANTICS = "post_decoder_block_output"
 REGISTERED_ORIENTATION = "unsafe_minus_safe"
+TEXT_SOURCE_MANIFEST_SCHEMA = "qwen-text-direction-source-manifest-v1"
 
 DIRECTION_FILENAME = "directions.safetensors"
 CONSTRUCTION_FILENAME = "construction_activations.safetensors"
@@ -47,6 +51,7 @@ DIRECTION_METADATA_FILENAME = "direction_metadata.json"
 RUN_METADATA_FILENAME = "run_metadata.json"
 SUMMARY_FILENAME = "summary.json"
 SOURCE_MANIFEST_FILENAME = "source_manifest.json"
+GENERATIONS_FILENAME = "generations.jsonl"
 PACKAGE_MANIFEST_FILENAME = "direction_package.json"
 
 PACKAGE_ARTIFACT_FILENAMES = (
@@ -56,6 +61,7 @@ PACKAGE_ARTIFACT_FILENAMES = (
     RUN_METADATA_FILENAME,
     SUMMARY_FILENAME,
     SOURCE_MANIFEST_FILENAME,
+    GENERATIONS_FILENAME,
 )
 PATHWAY_DIRECTION_KEYS: dict[Pathway, str] = {
     "text": "text_direction",
@@ -67,17 +73,17 @@ PATHWAY_CONSTRUCTION_KEYS: dict[Pathway, tuple[str, ...]] = {
 }
 
 REAL_ARM_CONDITIONS = (
-    "text_direction__text_site",
-    "text_direction__image_site",
-    "vision_direction__text_site",
-    "vision_direction__image_site",
+    "text_at_text",
+    "text_at_vision",
+    "vision_at_text",
+    "vision_at_vision",
 )
 REAL_BOTH_CONDITION = "own_path_both"
 RANDOM_CONTROL_CONDITIONS = (
-    "random_text_direction__text_site",
-    "random_text_direction__image_site",
-    "random_vision_direction__text_site",
-    "random_vision_direction__image_site",
+    "random_text_at_text",
+    "random_text_at_vision",
+    "random_vision_at_text",
+    "random_vision_at_vision",
 )
 RANDOM_BOTH_CONDITION = "random_both_own"
 ALL_CAUSAL_CONDITIONS = (
@@ -215,7 +221,11 @@ def _adapter_identity(payload: Mapping[str, Any], *, source: str) -> dict[str, A
     }
 
 
-def _validate_source_manifest(source_manifest: dict[str, Any]) -> str:
+def _validate_source_manifest(
+    source_manifest: dict[str, Any],
+    *,
+    pathway: Pathway,
+) -> str:
     claimed = _require_sha256(
         source_manifest.get("manifest_sha256"),
         field=f"{SOURCE_MANIFEST_FILENAME}.manifest_sha256",
@@ -224,6 +234,44 @@ def _validate_source_manifest(source_manifest: dict[str, Any]) -> str:
     replay.pop("manifest_sha256", None)
     if canonical_json_sha256(replay) != claimed:
         raise ValueError("source_manifest.json manifest_sha256 does not replay canonically.")
+    records = source_manifest.get("records")
+    if not isinstance(records, list) or len(records) < 4:
+        raise ValueError("source_manifest.json requires at least four construction records.")
+    if pathway == "text":
+        expected = {
+            "schema_version": TEXT_SOURCE_MANIFEST_SCHEMA,
+            "pairing": "same_image_same_prompt_harmful_vs_safe_completions",
+            "orientation": "harmful_minus_safe",
+        }
+        mismatches = {
+            key: (source_manifest.get(key), value)
+            for key, value in expected.items()
+            if source_manifest.get(key) != value
+        }
+        if mismatches:
+            raise ValueError(f"Text source manifest identity differs: {mismatches!r}.")
+        seen: set[str] = set()
+        required_hashes = (
+            "image_sha256",
+            "prompt_sha256",
+            "safe_completion_sha256",
+            "harmful_completion_sha256",
+        )
+        for index, record in enumerate(records):
+            if not isinstance(record, Mapping):
+                raise ValueError(f"Text source record {index} must be an object.")
+            pair_id = str(record.get("pair_id") or "").strip()
+            if not pair_id or pair_id in seen:
+                raise ValueError("Text source pair_id values must be non-empty and unique.")
+            seen.add(pair_id)
+            for field in required_hashes:
+                _require_sha256(record.get(field), field=f"records[{index}].{field}")
+            for field in ("safe_assistant_token_count", "harmful_assistant_token_count"):
+                value = record.get(field)
+                if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                    raise ValueError(f"Text source records require a positive {field}.")
+    elif source_manifest.get("schema_version") != VLGUARD_MANIFEST_SCHEMA:
+        raise ValueError("Vision source manifest is not the registered VLGuard schema.")
     return claimed
 
 
@@ -318,6 +366,7 @@ def _validate_artifact_hashes(
 def _validate_sidecar_linkage(
     package: Mapping[str, Any],
     *,
+    pathway: Pathway,
     direction_metadata: dict[str, Any],
     run_metadata: dict[str, Any],
     summary: dict[str, Any],
@@ -341,6 +390,7 @@ def _validate_sidecar_linkage(
         "residual_site": REGISTERED_RESIDUAL_SITE,
         "hook_semantics": REGISTERED_HOOK_SEMANTICS,
         "orientation": REGISTERED_ORIENTATION,
+        "pooling_dtype": "float32",
     }
     mismatches = {
         key: (direction_metadata.get(key), value)
@@ -362,7 +412,28 @@ def _validate_sidecar_linkage(
         if observed != expected_identity:
             raise ValueError(f"{name} adapter identity differs from the package.")
 
-    manifest_sha256 = _validate_source_manifest(source_manifest)
+    candidate_review = run_metadata.get("candidate_review")
+    if not isinstance(candidate_review, Mapping):
+        raise ValueError("run_metadata.json must bind the passed candidate review.")
+    review_sha256 = _require_sha256(
+        candidate_review.get("sha256"),
+        field="run_metadata.json.candidate_review.sha256",
+    )
+    if candidate_review.get("behavioral_gate") != "pass":
+        raise ValueError("run_metadata.json candidate review must have behavioral_gate='pass'.")
+    if summary.get("candidate_review_sha256") != review_sha256:
+        raise ValueError("summary.json differs from the bound candidate-review hash.")
+    if summary.get("generation_bundle_sha256") != artifacts[GENERATIONS_FILENAME]:
+        raise ValueError("summary.json differs from the bound generation-bundle hash.")
+    generation_rows = summary.get("generation_rows")
+    if (
+        not isinstance(generation_rows, int)
+        or isinstance(generation_rows, bool)
+        or generation_rows <= 0
+    ):
+        raise ValueError("summary.json generation_rows must be a positive integer.")
+
+    manifest_sha256 = _validate_source_manifest(source_manifest, pathway=pathway)
     for name, payload in ((RUN_METADATA_FILENAME, run_metadata), (SUMMARY_FILENAME, summary)):
         if payload.get("manifest_sha256") != manifest_sha256:
             raise ValueError(f"{name}.manifest_sha256 differs from source_manifest.json.")
@@ -447,6 +518,7 @@ def _validate_package_payload(
     source_manifest = _read_json_object(paths[SOURCE_MANIFEST_FILENAME])
     _validate_sidecar_linkage(
         payload,
+        pathway=expected_pathway,
         direction_metadata=direction_metadata,
         run_metadata=run_metadata,
         summary=summary,
@@ -456,6 +528,24 @@ def _validate_package_payload(
         paths,
         pathway=expected_pathway,
     )
+    records = source_manifest["records"]
+    if expected_pathway == "text":
+        if construction["text_paired_deltas"].shape[0] != len(records):
+            raise ValueError("Text construction rows differ from source-manifest pairs.")
+    else:
+        role_counts = {
+            role: sum(
+                isinstance(record, Mapping) and record.get("role") == role
+                for record in records
+            )
+            for role in ("direction_safe", "direction_unsafe")
+        }
+        observed_counts = {
+            "direction_safe": construction["vision_safe_activations"].shape[0],
+            "direction_unsafe": construction["vision_unsafe_activations"].shape[0],
+        }
+        if role_counts != observed_counts:
+            raise ValueError("Vision construction rows differ from source-manifest roles.")
     return DirectionPackage(
         root=root,
         pathway=expected_pathway,
@@ -479,7 +569,7 @@ def build_direction_package_manifest(
     hidden_size: int,
     run_fingerprint: str,
 ) -> dict[str, Any]:
-    """Build and fully replay a package manifest after all six artifacts exist.
+    """Build and fully replay a package manifest after all bound artifacts exist.
 
     The caller should write the returned object to ``direction_package.json``.
     Use :func:`write_direction_package_manifest` for immutable write-once
@@ -897,8 +987,11 @@ class QwenPathwaySteeringHook(AbstractContextManager["QwenPathwaySteeringHook"])
         return steered
 
     def __enter__(self) -> QwenPathwaySteeringHook:
+        import torch.nn as nn
+
         _name, blocks = resolve_qwen_language_blocks(self.model, layer=self.layer)
-        self.handle = blocks[self.layer].register_forward_hook(self._hook)
+        block = blocks[str(self.layer)] if isinstance(blocks, nn.ModuleDict) else blocks[self.layer]
+        self.handle = block.register_forward_hook(self._hook)
         return self
 
     def require_applied(self) -> None:
@@ -958,28 +1051,28 @@ def build_cross_pathway_arm_specs(
     return (
         CrossPathwayArm("baseline", None, None),
         CrossPathwayArm(
-            "text_direction__text_site",
+            "text_at_text",
             "text_direction",
             "text",
             text_direction=vectors["text_direction"],
             text_scale=scale,
         ),
         CrossPathwayArm(
-            "text_direction__image_site",
+            "text_at_vision",
             "text_direction",
             "image",
             image_direction=vectors["text_direction"],
             image_scale=scale,
         ),
         CrossPathwayArm(
-            "vision_direction__text_site",
+            "vision_at_text",
             "vision_direction",
             "text",
             text_direction=vectors["vision_direction"],
             text_scale=scale,
         ),
         CrossPathwayArm(
-            "vision_direction__image_site",
+            "vision_at_vision",
             "vision_direction",
             "image",
             image_direction=vectors["vision_direction"],
@@ -995,28 +1088,28 @@ def build_cross_pathway_arm_specs(
             image_scale=scale,
         ),
         CrossPathwayArm(
-            "random_text_direction__text_site",
+            "random_text_at_text",
             "random_text_direction",
             "text",
             text_direction=vectors["random_text_direction"],
             text_scale=scale,
         ),
         CrossPathwayArm(
-            "random_text_direction__image_site",
+            "random_text_at_vision",
             "random_text_direction",
             "image",
             image_direction=vectors["random_text_direction"],
             image_scale=scale,
         ),
         CrossPathwayArm(
-            "random_vision_direction__text_site",
+            "random_vision_at_text",
             "random_vision_direction",
             "text",
             text_direction=vectors["random_vision_direction"],
             text_scale=scale,
         ),
         CrossPathwayArm(
-            "random_vision_direction__image_site",
+            "random_vision_at_vision",
             "random_vision_direction",
             "image",
             image_direction=vectors["random_vision_direction"],
@@ -1138,24 +1231,42 @@ def summarize_paired_cross_pathway_arms(
     native_vs_cross = {
         "text_direction_image_minus_text_site": _paired_binary_delta(
             outcomes,
-            reference="text_direction__text_site",
-            comparison="text_direction__image_site",
-            seed=condition_seed("text_direction__text_site", "text_direction__image_site"),
+            reference="text_at_text",
+            comparison="text_at_vision",
+            seed=condition_seed("text_at_text", "text_at_vision"),
             replicates=bootstrap_replicates,
         ),
         "vision_direction_text_minus_image_site": _paired_binary_delta(
             outcomes,
-            reference="vision_direction__image_site",
-            comparison="vision_direction__text_site",
-            seed=condition_seed("vision_direction__image_site", "vision_direction__text_site"),
+            reference="vision_at_vision",
+            comparison="vision_at_text",
+            seed=condition_seed("vision_at_vision", "vision_at_text"),
             replicates=bootstrap_replicates,
         ),
+    }
+    matched_random_conditions = {
+        "text_at_text": "random_text_at_text",
+        "text_at_vision": "random_text_at_vision",
+        "vision_at_text": "random_vision_at_text",
+        "vision_at_vision": "random_vision_at_vision",
+        REAL_BOTH_CONDITION: RANDOM_BOTH_CONDITION,
+    }
+    real_vs_matched_random = {
+        real: _paired_binary_delta(
+            outcomes,
+            reference=random_control,
+            comparison=real,
+            seed=condition_seed(random_control, real),
+            replicates=bootstrap_replicates,
+        )
+        for real, random_control in matched_random_conditions.items()
     }
     return {
         "schema_version": CROSS_PATHWAY_CAUSAL_SCHEMA,
         "status": "MEASURED_CROSS_PATHWAY_CAUSAL_SCREEN",
         "claim_boundary": (
-            "Paired direction-by-intervention-site screen with native-site random controls; "
+            "Paired direction-by-intervention-site screen with matched direction/site random "
+            "controls; "
             "not a human safety conclusion and not evidence of BLOCK-EM, removal, rerouting, "
             "or displacement without the separately registered training and re-discovery gates."
         ),
@@ -1163,12 +1274,12 @@ def summarize_paired_cross_pathway_arms(
         "conditions": condition_rates,
         "real_direction_by_site_2x2": {
             "text_direction": {
-                "text_site": comparisons["text_direction__text_site"],
-                "image_site": comparisons["text_direction__image_site"],
+                "text_site": comparisons["text_at_text"],
+                "image_site": comparisons["text_at_vision"],
             },
             "vision_direction": {
-                "text_site": comparisons["vision_direction__text_site"],
-                "image_site": comparisons["vision_direction__image_site"],
+                "text_site": comparisons["vision_at_text"],
+                "image_site": comparisons["vision_at_vision"],
             },
         },
         "real_own_path_both": comparisons[REAL_BOTH_CONDITION],
@@ -1176,6 +1287,7 @@ def summarize_paired_cross_pathway_arms(
             condition: comparisons[condition] for condition in RANDOM_CONTROL_CONDITIONS
         },
         "random_both_own": comparisons[RANDOM_BOTH_CONDITION],
+        "real_vs_matched_random": real_vs_matched_random,
         "native_vs_cross_site": native_vs_cross,
         "bootstrap_seed_root": bootstrap_seed,
         "bootstrap_replicates": bootstrap_replicates,

@@ -1,6 +1,6 @@
 # Colab notebooks
 
-The active project is Qwen2.5-VL only. Use an A100 for both canonical experiment
+The active project is Qwen2.5-VL only. Use an A100 for the canonical experiment
 notebooks and persist artifacts under
 `/content/drive/MyDrive/em-displacement-vlm-qwen2-5-vl-3b`.
 
@@ -10,12 +10,21 @@ notebooks and persist artifacts under
 |---|---|---|---|
 | 0 | [`00_colab_preflight.ipynb`](00_colab_preflight.ipynb) | Read-only source/runtime/Drive diagnostics | A scientific result |
 | 1 | [`01q_reproduce_mft_qwen2_5_vl_3b.ipynb`](01q_reproduce_mft_qwen2_5_vl_3b.ipynb) | One BF16 `r=32` Qwen candidate adapter with recovery and provenance artifacts | Emergent misalignment, vision causality, or BLOCK-EM |
-| 2 | [`02q_vlguard_vision_validation.ipynb`](02q_vlguard_vision_validation.ipynb) | Pinned VLGuard roles, layer-13 vision direction, baseline/repair/random generation bundle, refusal-ASR summary | Human safety, vision-specific mechanism, BLOCK-EM, or displacement |
+| 2 | [`02q_vlguard_vision_validation.ipynb`](02q_vlguard_vision_validation.ipynb) | Pinned VLGuard roles, replayable layer-13 vision package, baseline/repair/random generation bundle, refusal-ASR summary | Completed Step 3, human safety, BLOCK-EM, or displacement |
+| 3 | [`03q_qwen_cross_pathway_comparison.ipynb`](03q_qwen_cross_pathway_comparison.ipynb) | Same-space geometry plus common held-out baseline, 2 x 2 direction/site matrix, own-path-both, and matched random controls | Modality origin, general safety, BLOCK-EM, or displacement |
 
-The second experiment notebook requires a provenance-complete adapter from the
-first. It runs 100 safe and 100 unsafe direction captures, then 700 generations
-over 100 disjoint held-out unsafe images. Re-running resumes the immutable
-package rather than starting a new experiment.
+Notebook `02q` requires a provenance-complete, reviewed adapter from `01q`. It
+runs 100 safe and 100 unsafe direction captures, then 700 generations over 100
+disjoint held-out unsafe images. Re-running resumes the immutable package
+rather than starting a new experiment.
+
+Notebook `03q` requires that complete vision package and a separate replayable
+Qwen text package for the exact same reviewed adapter. It fails closed when the
+text direction tensor, per-example construction activations, source manifest,
+generation bundle, or summary binding is missing. The handed-off text values
+70/58/77 are `TEAM_REPORTED_UNVERIFIED` and cannot satisfy that prerequisite.
+Its frozen 11-condition grid runs 1,100 generations over the same 100 held-out
+VLGuard rows and resumes by immutable run fingerprint.
 
 ## Utilities
 
@@ -64,9 +73,27 @@ python -u scripts/validate_vlguard_vision.py \
   --config <QWEN_DRIVE>/runs/qwen_vlguard_vision_seed42.yaml
 ```
 
+After both direction packages validate, notebook `03q` executes the registered
+comparison:
+
+```bash
+python scripts/compare_qwen_pathways.py \
+  --config <QWEN_DRIVE>/runs/qwen_cross_pathway_seed42.yaml \
+  --validate-config-only
+
+python -u scripts/compare_qwen_pathways.py \
+  --config <QWEN_DRIVE>/runs/qwen_cross_pathway_seed42.yaml
+```
+
+The primary cross-pathway alpha is 150. All conditions use the same held-out
+VLGuard rows. Effects between directions may be compared within one token site;
+raw effects across text and vision sites are not a pathway-strength result
+because the dynamic masks contain different token counts.
+
 Training seed 42 here identifies the Qwen adapter. It is not the retired Gemma
 seed-42 OOD experiment.
 
 See [the Qwen baseline runbook](../docs/QWEN2_5_VL_BASELINE.md),
-[the VLGuard protocol](../docs/VLGUARD_VISION_VALIDATION.md), and
+[the VLGuard protocol](../docs/VLGUARD_VISION_VALIDATION.md),
+[the Step 3 comparison contract](../docs/QWEN_CROSS_PATHWAY_COMPARISON.md), and
 [the evidence ledger](../docs/EXPERIMENT_STATUS.md).

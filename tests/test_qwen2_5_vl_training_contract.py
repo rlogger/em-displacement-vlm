@@ -27,6 +27,7 @@ from em_displacement_vlm.ft import (
     validate_model_family_contract,
     validate_primary_faces_ft_contract,
 )
+from scripts.ft_faces import _candidate_evidence_metadata
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -89,6 +90,28 @@ def test_qwen_config_matches_the_runtime_contract():
     assert config["completion_only_loss"] is True
     assert config["target_modules"] == "all-linear"
     assert config["seeds"] == [42, 43, 44]
+
+
+def test_qwen_candidate_metadata_uses_only_the_active_downstream_gates():
+    evidence = _candidate_evidence_metadata("qwen2_5_vl")
+
+    assert evidence == {
+        "evidence_tier": "candidate",
+        "candidate_face_sanity_gate": "pending_review",
+        "vlguard_vision_validation_gate": "pending",
+        "cross_pathway_comparison_gate": "blocked_pending_validated_direction_packages",
+        "status": "unverified_qwen_candidate_not_scientific_result",
+    }
+    assert "ood_em_reproduction_gate" not in evidence
+
+
+def test_gemma_candidate_metadata_retains_its_legacy_evidence_contract():
+    assert _candidate_evidence_metadata("gemma3") == {
+        "evidence_tier": "candidate",
+        "candidate_face_sanity_gate": "pending_review",
+        "ood_em_reproduction_gate": "blocked_external_sealed_assets_required",
+        "status": "unverified_candidate_not_paper_reproduction",
+    }
 
 
 def test_qwen_a100_hash_lock_contains_every_runtime_pin():

@@ -316,6 +316,7 @@ def _adapter(tmp_path: Path, *, seed: int = 42) -> Path:
 def _config(tmp_path: Path, adapter: Path) -> VisionValidationConfig:
     return VisionValidationConfig(
         adapter_dir=str(adapter),
+        review_summary_path=str(tmp_path / "review-summary.json"),
         manifest_path=str(tmp_path / "manifest.json"),
         image_root=str(tmp_path / "images"),
         output_dir=str(tmp_path / "results"),
@@ -343,6 +344,7 @@ def test_vision_validation_config_freezes_qwen_vlguard_and_layer_13(tmp_path: Pa
     with pytest.raises(ValueError, match="language layer 13"):
         VisionValidationConfig(
             adapter_dir=config.adapter_dir,
+            review_summary_path=config.review_summary_path,
             manifest_path=config.manifest_path,
             image_root=config.image_root,
             output_dir=config.output_dir,
@@ -351,6 +353,7 @@ def test_vision_validation_config_freezes_qwen_vlguard_and_layer_13(tmp_path: Pa
     with pytest.raises(ValueError, match="BF16"):
         VisionValidationConfig(
             adapter_dir=config.adapter_dir,
+            review_summary_path=config.review_summary_path,
             manifest_path=config.manifest_path,
             image_root=config.image_root,
             output_dir=config.output_dir,
@@ -359,6 +362,7 @@ def test_vision_validation_config_freezes_qwen_vlguard_and_layer_13(tmp_path: Pa
     with pytest.raises(ValueError, match=r"\[80, 150, 250\]"):
         VisionValidationConfig(
             adapter_dir=config.adapter_dir,
+            review_summary_path=config.review_summary_path,
             manifest_path=config.manifest_path,
             image_root=config.image_root,
             output_dir=config.output_dir,
@@ -367,6 +371,7 @@ def test_vision_validation_config_freezes_qwen_vlguard_and_layer_13(tmp_path: Pa
     with pytest.raises(ValueError, match="deterministic greedy"):
         VisionValidationConfig(
             adapter_dir=config.adapter_dir,
+            review_summary_path=config.review_summary_path,
             manifest_path=config.manifest_path,
             image_root=config.image_root,
             output_dir=config.output_dir,
@@ -376,6 +381,7 @@ def test_vision_validation_config_freezes_qwen_vlguard_and_layer_13(tmp_path: Pa
     with pytest.raises(ValueError, match="direction_prompt"):
         VisionValidationConfig(
             adapter_dir=config.adapter_dir,
+            review_summary_path=config.review_summary_path,
             manifest_path=config.manifest_path,
             image_root=config.image_root,
             output_dir=config.output_dir,

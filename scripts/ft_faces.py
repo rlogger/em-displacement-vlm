@@ -106,6 +106,25 @@ def _training_runtime_lock(model_family: str) -> dict[str, str] | None:
     }
 
 
+def _candidate_evidence_metadata(model_family: str) -> dict[str, str]:
+    """Declare only the downstream evidence gates registered for this model lane."""
+
+    if model_family == "qwen2_5_vl":
+        return {
+            "evidence_tier": "candidate",
+            "candidate_face_sanity_gate": "pending_review",
+            "vlguard_vision_validation_gate": "pending",
+            "cross_pathway_comparison_gate": "blocked_pending_validated_direction_packages",
+            "status": "unverified_qwen_candidate_not_scientific_result",
+        }
+    return {
+        "evidence_tier": "candidate",
+        "candidate_face_sanity_gate": "pending_review",
+        "ood_em_reproduction_gate": "blocked_external_sealed_assets_required",
+        "status": "unverified_candidate_not_paper_reproduction",
+    }
+
+
 def _resolve_data_selection_seed(config: dict[str, object]) -> int:
     """Return the immutable faces selection seed, separate from FT randomness."""
     value = config.get("data_selection_seed", DEFAULT_SEED)
@@ -532,12 +551,7 @@ def main() -> int:
                     "repository": "idhantgulati/vlm-alignment",
                     "commit": "84bfc695386ba56c6740eb7c00a8481830ac1c34",
                 },
-                "evidence": {
-                    "evidence_tier": "candidate",
-                    "candidate_face_sanity_gate": "pending_review",
-                    "ood_em_reproduction_gate": "blocked_external_sealed_assets_required",
-                    "status": "unverified_candidate_not_paper_reproduction",
-                },
+                "evidence": _candidate_evidence_metadata(ft_cfg.model_family),
             },
         },
     )

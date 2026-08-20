@@ -12,6 +12,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from em_displacement_vlm.cross_pathway import (  # noqa: E402
+    write_direction_package_manifest,
+)
+from em_displacement_vlm.evals.candidate_review import (  # noqa: E402
+    validate_candidate_review_binding,
+)
 from em_displacement_vlm.evals.sanity_em import SanityConfig, load_ft_model  # noqa: E402
 from em_displacement_vlm.ft import assert_qwen_a100_runtime  # noqa: E402
 from em_displacement_vlm.runs import (  # noqa: E402
@@ -171,7 +177,7 @@ def _capture_direction(
     *,
     config: VisionValidationConfig,
     manifest: dict[str, Any],
-) -> tuple[Any, dict[str, Any]]:
+) -> tuple[Any, Any, Any, dict[str, Any]]:
     import torch
     from PIL import Image
 
@@ -210,7 +216,11 @@ def _capture_direction(
     direction, raw_norm = mean_difference_direction(unsafe, safe)
     metadata = {
         "layer": config.layer,
-        "residual_site": "qwen_language_residual_image_placeholder_tokens",
+        "residual_site": "qwen_language_decoder_block_output",
+        "hook_semantics": "post_decoder_block_output",
+        "pooling_positions": "dynamic_image_placeholder_tokens",
+        "pooling_dtype": "float32",
+        "orientation": "unsafe_minus_safe",
         "contrast": "mean(unsafe_images)-mean(safe_images)",
         "pairing": "unpaired_safe_vs_unsafe_image_groups",
         "direction_prompt": prompt,
@@ -223,7 +233,7 @@ def _capture_direction(
             role: [min(values), max(values)] for role, values in token_counts.items()
         },
     }
-    return direction, metadata
+    return direction, safe, unsafe, metadata
 
 
 def _load_model(config: VisionValidationConfig) -> tuple[Any, Any]:
@@ -258,6 +268,11 @@ def main() -> int:
     if manifest["selection"]["direction_prompt"] != config.direction_prompt:
         raise ValueError("Config direction_prompt differs from the sealed VLGuard manifest.")
     adapter = qwen_adapter_provenance(config)
+    review_summary_path = Path(config.review_summary_path).expanduser().resolve()
+    review = validate_candidate_review_binding(
+        Path(config.adapter_dir).expanduser().resolve(),
+        review_summary_path,
+    )
 
     contract = {
         "schema_version": VISION_RESULT_SCHEMA,
@@ -266,6 +281,11 @@ def main() -> int:
         "manifest_path": str(manifest_path),
         "manifest_sha256": manifest["manifest_sha256"],
         "adapter": adapter,
+        "candidate_review": {
+            "path": str(review_summary_path),
+            "sha256": sha256_file(review_summary_path),
+            "behavioral_gate": review["behavioral_gate"],
+        },
     }
     if args.validate_config_only:
         contract["run_fingerprint"] = canonical_json_sha256(contract)
@@ -281,25 +301,45 @@ def main() -> int:
 
     output_dir = Path(config.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    _write_once(output_dir / "source_manifest.json", manifest)
     metadata_path = output_dir / "run_metadata.json"
     _write_once(metadata_path, contract)
 
     model, processor = _load_model(config)
     direction_path = output_dir / "directions.safetensors"
+    construction_path = output_dir / "construction_activations.safetensors"
     direction_metadata_path = output_dir / "direction_metadata.json"
-    if direction_path.exists() or direction_metadata_path.exists():
-        if not direction_path.is_file() or not direction_metadata_path.is_file():
+    if any(
+        path.exists()
+        for path in (direction_path, construction_path, direction_metadata_path)
+    ):
+        if not all(
+            path.is_file()
+            for path in (direction_path, construction_path, direction_metadata_path)
+        ):
             raise RuntimeError("Vision direction checkpoint is partial.")
         from safetensors.torch import load_file
 
         tensors = load_file(str(direction_path), device="cpu")
+        construction = load_file(str(construction_path), device="cpu")
         direction = tensors["vision_direction"]
         random = tensors["random_equal_norm"]
+        if set(construction) != {
+            "vision_safe_activations",
+            "vision_unsafe_activations",
+        }:
+            raise RuntimeError("Saved vision construction tensors have invalid keys.")
+        safe = construction["vision_safe_activations"]
+        unsafe = construction["vision_unsafe_activations"]
         direction_metadata = _read_json(direction_metadata_path)
         if direction_metadata.get("run_fingerprint") != contract["run_fingerprint"]:
             raise RuntimeError("Saved vision direction belongs to a different run.")
         if direction_metadata.get("tensor_sha256") != sha256_file(direction_path):
             raise RuntimeError("Saved vision direction tensor hash is invalid.")
+        if direction_metadata.get("construction_sha256") != sha256_file(
+            construction_path
+        ):
+            raise RuntimeError("Saved vision construction tensor hash is invalid.")
         if direction.ndim != 1 or random.shape != direction.shape:
             raise RuntimeError("Saved vision direction tensors have invalid shapes.")
         if not direction.isfinite().all() or not random.isfinite().all():
@@ -308,8 +348,14 @@ def main() -> int:
             raise RuntimeError("Saved vision direction is not unit normalized.")
         if abs(float(random.norm().item()) - float(direction.norm().item())) > 1e-5:
             raise RuntimeError("Saved random control does not match the direction norm.")
+        replayed, _raw_norm = mean_difference_direction(unsafe, safe)
+        tolerance = 1e-6 + 1e-6 * direction.abs()
+        if not bool(((replayed - direction).abs() <= tolerance).all().item()):
+            raise RuntimeError(
+                "Saved vision direction does not replay from construction activations."
+            )
     else:
-        direction, direction_details = _capture_direction(
+        direction, safe, unsafe, direction_details = _capture_direction(
             model,
             processor,
             config=config,
@@ -329,10 +375,22 @@ def main() -> int:
                 "run_fingerprint": contract["run_fingerprint"],
             },
         )
+        save_file(
+            {
+                "vision_safe_activations": safe.contiguous(),
+                "vision_unsafe_activations": unsafe.contiguous(),
+            },
+            str(construction_path),
+            metadata={
+                "schema_version": VISION_RESULT_SCHEMA,
+                "run_fingerprint": contract["run_fingerprint"],
+            },
+        )
         direction_metadata = {
             "schema_version": VISION_RESULT_SCHEMA,
             "run_fingerprint": contract["run_fingerprint"],
             "tensor_sha256": sha256_file(direction_path),
+            "construction_sha256": sha256_file(construction_path),
             "random_seed": config.random_seed,
             **direction_details,
         }
@@ -434,6 +492,7 @@ def main() -> int:
         "commit": commit,
         "manifest_sha256": manifest["manifest_sha256"],
         "adapter": adapter,
+        "candidate_review_sha256": sha256_file(review_summary_path),
         "direction": direction_metadata,
         "judge": config.judge,
         "metrics": metrics,
@@ -463,7 +522,17 @@ def main() -> int:
         "generation_rows": len(ordered_rows),
         "generation_bundle_sha256": sha256_file(rows_path),
     }
-    _write_once(output_dir / "summary.json", summary)
+    summary_path = output_dir / "summary.json"
+    _write_once(summary_path, summary)
+
+    write_direction_package_manifest(
+        output_dir,
+        pathway="vision",
+        adapter_fingerprint=adapter["fingerprint"],
+        training_seed=config.training_seed,
+        hidden_size=int(direction.shape[0]),
+        run_fingerprint=contract["run_fingerprint"],
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

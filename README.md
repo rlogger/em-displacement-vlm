@@ -1,11 +1,13 @@
-# Qwen2.5-VL Emergent Misalignment and Vision-Pathway Validation
+# Qwen2.5-VL Emergent Misalignment and Cross-Pathway Validation
 
 Publication-oriented research code for training a Qwen2.5-VL candidate,
-constructing a VLGuard image-derived direction, and causally testing
-image-token steering before a future BLOCK-EM experiment.
+constructing a VLGuard image-derived direction, and comparing text/vision
+directions in one shared residual space and held-out causal screen before a
+future BLOCK-EM experiment.
 
 [![Qwen2.5-VL candidate](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb)
 [![VLGuard vision validation](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/02q_vlguard_vision_validation.ipynb)
+[![Qwen cross-pathway comparison](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/03q_qwen_cross_pathway_comparison.ipynb)
 [![Colab preflight](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_colab_preflight.ipynb)
 [![Safe Drive archive](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_safe_cleanup_and_reset.ipynb)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -22,8 +24,9 @@ G0  clean source + exact A100 runtime + dedicated Qwen Drive root
  -> G1  frozen 1,500-example faces role
  -> G2  BF16 r=32 Qwen2.5-VL 3B candidate adapter
  -> G3  matched candidate review
- -> G4  VLGuard layer-13 vision direction + causal repair/random screen
- -> G5  Qwen BLOCK-EM + re-discovery/displacement (design only)
+ -> G4  VLGuard layer-13 vision direction package + own-path screen
+ -> G5  replayable text input + Step 3 common cross-pathway comparison
+ -> G6  Qwen BLOCK-EM + re-discovery/displacement (design only)
 ```
 
 The canonical Colabs are:
@@ -35,6 +38,9 @@ The canonical Colabs are:
 3. [`02q_vlguard_vision_validation.ipynb`](notebooks/02q_vlguard_vision_validation.ipynb)
    — build the pinned VLGuard direction and run baseline, repair, and random
    controls at alpha 80/150/250.
+4. [`03q_qwen_cross_pathway_comparison.ipynb`](notebooks/03q_qwen_cross_pathway_comparison.ipynb)
+   — after both direction packages validate, run same-space geometry and the
+   common held-out direction-by-site causal matrix at primary alpha 150.
 
 Use only this persistent root for the active lane:
 
@@ -57,6 +63,9 @@ lineage only and are never mixed into Qwen evidence.
 - The handed-off text figures (baseline 70, repair 58, random 77) are
   `TEAM_REPORTED_UNVERIFIED`: their direction tensor and bound generation
   package are not present on this repository's current public `main`.
+- Step 3 is `BLOCKED_MISSING_TEXT_PACKAGE`. Its runner must fail closed until a
+  Qwen text package and the VLGuard vision package replay against the same
+  reviewed adapter, layer, site, and held-out evaluation manifest.
 - Qwen BLOCK-EM, post-intervention re-discovery, and displacement remain
   `DESIGN_ONLY`.
 
@@ -84,6 +93,21 @@ and image-paired bootstrap intervals. The deterministic keyword refusal metric
 is a causal screen, not a human safety verdict. See
 [VLGUARD_VISION_VALIDATION.md](docs/VLGUARD_VISION_VALIDATION.md).
 
+## Step 3 cross-pathway comparison
+
+Step 3 first measures signed geometry between `c_text` and `c_vis` at the exact
+same Qwen layer-13 decoder-block output. It then reuses one common held-out
+VLGuard set for baseline, all four direction/site cells, the simultaneous
+own-path-both arm, and matched same-site random controls. This is necessary:
+putting independently produced text and vision ASR numbers side by side is not
+a controlled cross-pathway comparison.
+
+Alpha 150 is primary. Unit normalization makes the two directions comparable
+within a token site, but different text/image token counts mean raw effects
+across sites are not evidence that one pathway is stronger. The keyword judge
+remains a screen, and the missing text package currently blocks execution. See
+[QWEN_CROSS_PATHWAY_COMPARISON.md](docs/QWEN_CROSS_PATHWAY_COMPARISON.md).
+
 ## Frozen identities
 
 | Component | Identity |
@@ -101,6 +125,7 @@ src/em_displacement_vlm/
   data/                    immutable faces-role construction
   ft/                      Qwen BF16 LoRA runtime and trainer contracts
   vision_validation.py     VLGuard parsing, capture, steering, and metrics
+  cross_pathway.py         Step 3 package replay, geometry, and causal matrix
   interventions/           smoke/design helpers; not production BLOCK-EM
 configs/                    frozen Qwen training and validation templates
 requirements/              hash-locked A100 environment

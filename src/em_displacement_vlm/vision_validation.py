@@ -461,6 +461,7 @@ class VisionValidationConfig:
     """Frozen execution contract for the Qwen/VLGuard causal screen."""
 
     adapter_dir: str
+    review_summary_path: str
     manifest_path: str
     image_root: str
     output_dir: str
@@ -536,7 +537,13 @@ class VisionValidationConfig:
             raise ValueError(
                 f"direction_prompt must remain {DEFAULT_DIRECTION_PROMPT!r}."
             )
-        for field_name in ("adapter_dir", "manifest_path", "image_root", "output_dir"):
+        for field_name in (
+            "adapter_dir",
+            "review_summary_path",
+            "manifest_path",
+            "image_root",
+            "output_dir",
+        ):
             if not str(getattr(self, field_name)).strip():
                 raise ValueError(f"{field_name} is required.")
 

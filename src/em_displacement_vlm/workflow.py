@@ -25,18 +25,20 @@ EXPECTED_GATE_NAMES = {
     "G2": "qwen_candidate_training",
     "G3": "qwen_candidate_review",
     "G4": "vlguard_vision_causal_validation",
-    "G5": "qwen_blocking_and_displacement",
+    "G5": "qwen_cross_pathway_comparison",
+    "G6": "qwen_blocking_and_displacement",
 }
 EXPECTED_GATE_IDS = tuple(EXPECTED_GATE_NAMES)
 EXPECTED_DEPENDENCIES = {
     gate_id: ([] if index == 0 else [EXPECTED_GATE_IDS[index - 1]])
     for index, gate_id in enumerate(EXPECTED_GATE_IDS)
 }
-REQUIRED_DESIGN_ONLY_GATES = frozenset({"G5"})
+REQUIRED_DESIGN_ONLY_GATES = frozenset({"G6"})
 EXPECTED_CANONICAL_NOTEBOOKS = (
     "notebooks/00_colab_preflight.ipynb",
     "notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb",
     "notebooks/02q_vlguard_vision_validation.ipynb",
+    "notebooks/03q_qwen_cross_pathway_comparison.ipynb",
 )
 ALLOWED_PATH_ROLES = frozenset(
     {
