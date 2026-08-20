@@ -200,6 +200,34 @@ def inspect_model_provenance(
                 "Adapter provenance does not match the selected frozen split; refusing a mixed "
                 "model/data sanity run."
             )
+        effective_training = provenance.get("effective_training_config")
+        if not isinstance(effective_training, dict):
+            raise ValueError(
+                "Adapter provenance has no effective training config; its base model and "
+                "revision cannot be bound to this sanity run."
+            )
+        trained_base = str(effective_training.get("base_model") or "").strip()
+        trained_revision = str(
+            effective_training.get("base_model_revision") or ""
+        ).strip()
+        if trained_base != str(cfg.base_model_id).strip():
+            raise ValueError(
+                "Adapter base model does not match the configured sanity base model: "
+                f"{trained_base!r} != {cfg.base_model_id!r}."
+            )
+        if trained_revision != str(cfg.base_model_revision).strip():
+            raise ValueError(
+                "Adapter base-model revision does not match the configured sanity revision: "
+                f"{trained_revision!r} != {cfg.base_model_revision!r}."
+            )
+        trained_seed = effective_training.get("seed")
+        if not isinstance(trained_seed, int) or isinstance(trained_seed, bool):
+            raise ValueError("Adapter effective training config has no integer training seed.")
+        if trained_seed != cfg.seed:
+            raise ValueError(
+                "Adapter training seed does not match the configured sanity seed: "
+                f"{trained_seed!r} != {cfg.seed!r}."
+            )
         reproduction_manifest = adapter_dir / "reproduction_manifest.json"
         if provenance.get("reproduction_manifest_sha256") != _sha256_file(reproduction_manifest):
             raise ValueError("Adapter reproduction manifest hash does not match run metadata.")
@@ -299,6 +327,10 @@ def load_ft_model(cfg: SanityConfig) -> tuple[Any, Any]:
     from unsloth import FastVisionModel
 
     validate_sanity_config(cfg)
+    from em_displacement_vlm.constants import QWEN2_5_VL_3B_MODEL_ID
+
+    is_qwen_vl = cfg.base_model_id == QWEN2_5_VL_3B_MODEL_ID
+    loader_kwargs = {"max_seq_length": 4096} if is_qwen_vl else {}
 
     try:
         from peft import PeftConfig, PeftModel
@@ -320,6 +352,7 @@ def load_ft_model(cfg: SanityConfig) -> tuple[Any, Any]:
             revision=cfg.base_model_revision,
             load_in_4bit=cfg.load_in_4bit,
             use_gradient_checkpointing="unsloth",
+            **loader_kwargs,
         )
         model = PeftModel.from_pretrained(model, cfg.model_id)
     else:
@@ -328,8 +361,13 @@ def load_ft_model(cfg: SanityConfig) -> tuple[Any, Any]:
             revision=cfg.base_model_revision,
             load_in_4bit=cfg.load_in_4bit,
             use_gradient_checkpointing="unsloth",
+            **loader_kwargs,
         )
 
+    if is_qwen_vl:
+        from em_displacement_vlm.ft import assert_qwen2_5_vl_native_chat_template
+
+        processor = assert_qwen2_5_vl_native_chat_template(processor)
     FastVisionModel.for_inference(model)
     return model, processor
 

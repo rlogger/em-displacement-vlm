@@ -116,15 +116,23 @@ gates:
         role: implementation
       - path: configs/reproduce_mft_gemma3.yaml
         role: config
+      - path: configs/reproduce_mft_qwen2_5_vl_3b.yaml
+        role: config
+      - path: requirements/qwen-a100.lock
+        role: config
+      - path: docs/QWEN2_5_VL_BASELINE.md
+        role: protocol
     artifacts:
       - m_ft_adapter
       - recovery_checkpoints
       - run_metadata
       - reproduction_manifest
     completion_evidence: >-
-      A training-seed-specific r=32 Gemma 3-4B candidate adapter completes from the
-      shared frozen role with response-only masking audit, resumable checkpoints,
-      and bound provenance. Training completion alone is not EM evidence.
+      A training-seed-specific r=32 Gemma 3-4B or Qwen2.5-VL 3B candidate adapter
+      completes from the shared frozen role with a model-family-specific template,
+      response-only masking audit, resolved trainable-parameter manifest, resumable
+      checkpoints, and bound provenance. Evidence remains model-family-specific;
+      training completion alone is not EM evidence.
 
   - id: G3
     name: candidate_face_sanity_review

@@ -12,6 +12,9 @@ Read [EXPERIMENT_STATUS.md](../docs/EXPERIMENT_STATUS.md) first.
 | **[`03_ood_em_baseline.ipynb`](03_ood_em_baseline.ipynb)** | Seal the 150-text/250-VQA reconstruction; generate matched base/FT bundles; run the blinded bilateral judge; calibrate with two reviewers; seal the three-seed gate. | An exact-paper or automatically decided result. |
 | **[`04_rq1_shared_residual_geometry.ipynb`](04_rq1_shared_residual_geometry.ipynb)** | Run the OOD-gated, ≥50-pair shared-residual extension per seed and strict three-seed aggregation. | The paper's final-token/SVD geometry, causal origin, or intervention efficacy. |
 | [`00_colab_preflight.ipynb`](00_colab_preflight.ipynb) | Optional GPU/Drive/clone/package diagnostic. | A prerequisite or a scientific gate. |
+| [`00_safe_cleanup_and_reset.ipynb`](00_safe_cleanup_and_reset.ipynb) | Non-canonical Drive inventory and reversible archive/reset utility; dry-run by default and never deletes. | A scientific gate, evidence repair, or permission to mix model families/seeds. |
+| [`01q_reproduce_mft_qwen2_5_vl_3b.ipynb`](01q_reproduce_mft_qwen2_5_vl_3b.ipynb) | Supplementary A100/Drive lane for the separately pinned Qwen2.5-VL 3B candidate. | Gemma evidence, Qwen OOD EM, Qwen RQ1, or BLOCK-EM. |
+| [`05_verified_results.ipynb`](05_verified_results.ipynb) | Non-canonical CPU-only, read-only viewer that verifies public hashes and replays complete Drive packages before showing aggregates. | New evidence, artifact repair, or a change to `RESULT_UNVERIFIED`. |
 | [`manual/verify_mft_sanity.ipynb`](manual/verify_mft_sanity.ipynb) | Manual re-check of a completed candidate adapter. | A matched base comparison or OOD EM evidence. |
 | [`reference/`](reference/) | Stripped source lineage: FT, sanity, component, and synthetic generator. | Canonical data, output evidence, or a runnable/reviewed protocol. |
 

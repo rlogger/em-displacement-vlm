@@ -31,6 +31,7 @@ past the OOD baseline gate.
 | Team synthetic generator | `notebooks/reference/synthetic_text_gen_pipeline.ORIG.ipynb` | Candidate generator distinct from official `syn-data-gen`; its team-variant prompt and generated artifacts are absent |
 | EM organism patterns | [clarifying-EM/model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM) | TinyTwoTower engineering smoke, not a Gemma result |
 | Completion-only SFT | [google-gemini/gemma-cookbook](https://github.com/google-gemini/gemma-cookbook) + TRL | Completion-only training configuration |
+| Qwen replication checkpoint | [`Qwen/Qwen2.5-VL-3B-Instruct` @ `66285546`](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/tree/66285546d2b821cf421d4f5eb2576359d3770cd3) | Separately pinned G2 candidate-training lane, matching the model in the upstream Qwen-VL notebook; no Gemma evidence transfers |
 | Parent face distribution | [UTKFace](https://huggingface.co/datasets/nu-delta/utkface) | Optional same-parent neutral control, separately materialized |
 
 Do not combine source runs with different rank, rows, seed, decoder, base
@@ -329,6 +330,11 @@ pytest -q
 python scripts/smoke_test.py --config configs/smoke.yaml
 uv lock --check
 ```
+
+This is the local engineering environment. The Qwen2.5-VL A100 trainer has a
+separate, platform-specific, hash-locked dependency graph at
+`requirements/qwen-a100.lock`; use the commands and construction-only gate in
+`docs/QWEN2_5_VL_BASELINE.md` before spending optimizer steps.
 
 ## Secrets and content hygiene
 

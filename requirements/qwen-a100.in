@@ -1,0 +1,18 @@
+# Immutable Qwen2.5-VL 3B BF16 LoRA runtime for Linux x86_64 + CUDA 12.8.
+# Regenerate with the command documented in docs/QWEN2_5_VL_BASELINE.md.
+-e .[dev]
+
+unsloth==2026.8.18
+unsloth-zoo==2026.8.12
+torch==2.10.0
+torchvision==0.25.0
+torchao==0.16.0
+transformers==4.56.2
+trl==0.22.2
+datasets==4.3.0
+accelerate==1.14.0
+peft==0.20.0
+huggingface-hub==0.36.2
+bitsandbytes==0.50.1
+xformers==0.0.34; platform_system == "Linux" and platform_machine == "x86_64"
+qwen-vl-utils==0.0.14

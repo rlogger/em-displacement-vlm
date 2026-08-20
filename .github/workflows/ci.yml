@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if rg --pcre2 -n --hidden -g '!.git/**' '(hf_[A-Za-z0-9]{20,}|wandb_v1_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})' .; then
+          if rg --pcre2 -n --hidden -g '!.git/**' '(hf_[A-Za-z0-9]{20,}|wandb_v1_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,})' .; then
             echo "Potential credential detected."
             exit 1
           fi

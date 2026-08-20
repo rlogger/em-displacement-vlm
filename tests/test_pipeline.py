@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -24,7 +26,12 @@ from em_displacement_vlm.extraction import capture_forward, default_targets
 from em_displacement_vlm.interventions import BlockEMConfig, BlockEMTrainerStep, block_penalty
 from em_displacement_vlm.models.tiny import TinyTwoTower
 from em_displacement_vlm.paths import ensure_src_on_path, repo_root
-from em_displacement_vlm.runs import RESULT_FIELDS, ResultsLogger, require_run_contract
+from em_displacement_vlm.runs import (
+    RESULT_FIELDS,
+    ResultsLogger,
+    require_clean_git_worktree,
+    require_run_contract,
+)
 from em_displacement_vlm.runtime import runtime_info
 
 
@@ -181,6 +188,74 @@ def test_run_contract_and_logger(tmp_path: Path, monkeypatch):
     lines = logger.path.read_text().strip().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["metric"] == "m"
+
+
+def test_clean_git_worktree_gate_rejects_every_uncommitted_state(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("init")
+    tracked = repo / "tracked.txt"
+    tracked.write_text("committed\n")
+    git("add", "tracked.txt")
+    git(
+        "-c",
+        "user.name=Test User",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "initial",
+    )
+    head = git("rev-parse", "HEAD").stdout.strip()
+    assert require_clean_git_worktree(repo, expected_commit=head) == head
+
+    tracked.write_text("unstaged\n")
+    with pytest.raises(RuntimeError, match="clean git worktree"):
+        require_clean_git_worktree(repo)
+    git("add", "tracked.txt")
+    with pytest.raises(RuntimeError, match="clean git worktree"):
+        require_clean_git_worktree(repo)
+    git(
+        "-c",
+        "user.name=Test User",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "second",
+    )
+    (repo / "untracked.txt").write_text("untracked\n")
+    with pytest.raises(RuntimeError, match="clean git worktree"):
+        require_clean_git_worktree(repo)
+
+    with pytest.raises(RuntimeError, match="Cannot resolve git HEAD"):
+        require_clean_git_worktree(tmp_path / "not-a-repo")
+
+
+@pytest.mark.parametrize("value", [None, "bad", float("nan"), float("inf"), float("-inf")])
+def test_training_loss_gate_rejects_missing_or_nonfinite(value):
+    from scripts.ft_faces import _require_finite_training_loss
+
+    stats = SimpleNamespace() if value is None else SimpleNamespace(training_loss=value)
+    with pytest.raises(RuntimeError, match="training_loss"):
+        _require_finite_training_loss(stats)
+
+
+@pytest.mark.parametrize(("value", "expected"), [(0.0, 0.0), ("1.25", 1.25)])
+def test_training_loss_gate_accepts_finite_values(value, expected):
+    from scripts.ft_faces import _require_finite_training_loss
+
+    assert _require_finite_training_loss(SimpleNamespace(training_loss=value)) == expected
 
 
 def test_tiny_hooks_and_dim():

@@ -1,4 +1,4 @@
-"""Pinned protocol constants for Gemma3-4B FT, evaluation, and Tiny smoke."""
+"""Pinned protocol constants for production VLM runs and Tiny smoke."""
 
 from __future__ import annotations
 
@@ -18,7 +18,13 @@ TEXT_TOKEN_START: int = 256
 FACES_HF_DATASET: str = "idhantgulati/faces-vision-alignment"
 FACES_HF_REVISION: str = "e16884582fe756d79e5987237a30c685543cb0f6"
 # Pinned Unsloth mirror of Gemma 3-4B-IT used by the Colab reproduction.
+GEMMA3_4B_MODEL_ID: str = "unsloth/gemma-3-4b-it"
 GEMMA3_4B_UNSLOTH_REVISION: str = "bf46152c47f5dd20b896357cb51abc4c03b8ee8c"
+# Qwen2.5-VL is an independent replication model.  The 3B checkpoint matches
+# the Qwen-VL training lane in the pinned Gulati & Raval repository; pin its
+# official Hub revision rather than following a moving branch.
+QWEN2_5_VL_3B_MODEL_ID: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+QWEN2_5_VL_3B_REVISION: str = "66285546d2b821cf421d4f5eb2576359d3770cd3"
 # Parent UTKFace distribution for Neutral Faces control (same family as harmful subset).
 UTKFACE_HF_DATASET: str = "nu-delta/utkface"
 FACES_HARMFUL_N: int = 1500

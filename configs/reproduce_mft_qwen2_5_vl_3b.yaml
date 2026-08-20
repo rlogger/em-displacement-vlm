@@ -1,10 +1,10 @@
-run_name: reproduce_mft_gemma3_r32
+run_name: reproduce_mft_qwen2_5_vl_3b_r32
 seed: 42  # training / LoRA randomness; repeat as 42, 43, and 44
 data_selection_seed: 42  # fixed immutable faces split shared by every training seed
 seeds: [42, 43, 44]
-model_family: gemma3
-model_id: unsloth/gemma-3-4b-it
-model_revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
+model_family: qwen2_5_vl
+model_id: Qwen/Qwen2.5-VL-3B-Instruct
+model_revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
 dataset: idhantgulati/faces-vision-alignment
 dataset_revision: e16884582fe756d79e5987237a30c685543cb0f6
 n_samples: 1500
@@ -12,7 +12,7 @@ lora_rank: 32
 lora_alpha: 32
 lr: 2.0e-4
 epochs: 1
-# A100 40GB: batch 1 + accum 4 = effective 4 (playbook). Raise accum if needed.
+# A100 40GB: batch 1 + accum 4 = effective 4, matching the Gemma anchor.
 per_device_batch_size: 1
 grad_accum: 4
 effective_batch_size: 4
@@ -24,7 +24,9 @@ finetune_language: true
 finetune_attention_modules: true
 finetune_mlp_modules: true
 target_modules: all-linear
-chat_template: gemma-3
+# Use the processor-owned Qwen template. Never substitute Gemma's template or a
+# hand-written template, because that changes image placeholders and loss masks.
+chat_template: native
 bf16: true
 optim: adamw_torch_fused
 max_grad_norm: 1.0
@@ -39,14 +41,14 @@ max_seq_length: 4096
 save_steps: 25
 save_total_limit: 3
 resume_from_checkpoint: auto
-split_root: null  # notebook materializes the shared immutable Drive root data/splits/seed42
+split_root: null  # materialize the shared immutable data/splits/seed42 path per run
 push_to_hub: false  # direct FT-time push is forbidden; use the reviewed push command later
-hub_repo: null  # set to youruser/FT_R32_gemma3_faces_seed42
+hub_repo: null  # set to youruser/FT_R32_qwen2_5_vl_3b_faces_seed42 after review
 hub_private: true
-use_wandb: false  # the Colab notebook opts in after a secret preflight
+use_wandb: false  # opt in only after a secret and runtime preflight
 wandb_project: em-displacement-vlm
 wandb_entity: null  # uses the default W&B user/team selected by the API key
-wandb_group: mft-gemma3-r32
-checkpoint_prefix: FT_R32_
-output_dir: null  # notebook materializes a Drive-backed seed-specific directory
+wandb_group: mft-qwen2-5-vl-3b-r32
+checkpoint_prefix: FT_R32_qwen2_5_vl_3b_
+output_dir: null  # materialize a persistent, seed-specific trainer directory
 runtime: colab

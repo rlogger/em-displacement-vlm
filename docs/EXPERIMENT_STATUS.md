@@ -6,7 +6,7 @@ or a runnable notebook is not evidence of a completed scientific experiment.
 ```yaml
 status_schema: 1
 overall_claim_status: RESULT_UNVERIFIED
-as_of: "2026-08-13"
+as_of: "2026-08-19"
 
 CODE_VERIFIED:
   meaning: "Local engineering checks can validate code paths and artifact contracts."
@@ -24,13 +24,23 @@ A100_UNRUN:
     - "bilateral blinded judge evidence with fixed evaluation randomness"
     - "two-reviewer calibration, per-seed decisions, and the SHA-bound three-seed OOD gate"
   note: >
-    Candidate adapters and OOD *candidate pools* exist as private Hub / Drive
-    artifacts (see Durable external artifacts). That is not an OOD EM result.
+    Three public Gemma candidate adapters have immutable, reviewed face-sanity
+    summaries, and OOD *candidate pools* exist on Hub / Drive (see Durable
+    external artifacts). Those are candidate/input evidence, not an OOD EM result.
+
+QWEN2_5_VL_G2:
+  meaning: >
+    The exact 3B model/config are pinned, the A100-targeted dependency graph is
+    resolver-validated and hash-locked, and local unit/processor contracts pass.
+    The real Unsloth model + LoRA + collator + trainer construction and every
+    optimizer step remain A100_UNRUN.
+  scientific_interpretation: "None; no Qwen adapter or behavioral evidence exists."
 
 RESULT_UNVERIFIED:
   meaning: "No scientific conclusion may be reported from this repository snapshot."
   prohibited_claims:
     - "EM reproduced on Gemma 3-4B"
+    - "EM reproduced on Qwen2.5-VL 3B"
     - "RQ1 shared or modality-specific geometry established"
     - "BLOCK-EM removes or displaces behavior"
   next_gate: >
@@ -45,9 +55,10 @@ These are **not** committed in git. They support engineering handoff and do
 
 | Artifact | Location | Status |
 |---|---|---|
-| Candidate LoRA `r=32` seeds 42/43/44 | Drive `checkpoints/FT_R32_gemma3_faces_seed{SEED}/`; private Hub `rlogger/FT_R32_gemma3_faces_seed{SEED}` | Built; Hub includes `review_seed{SEED}_summary.json` when pushed |
+| Candidate LoRA `r=32` seeds 42/43/44 | Drive `checkpoints/FT_R32_gemma3_faces_seed{SEED}/`; public Hub `rlogger/FT_R32_gemma3_faces_seed{SEED}` at revisions recorded in `protocols/external_artifacts.yaml` | Built; immutable Hub packages include passed candidate face-sanity summaries. See `docs/RESULTS.md`; this is not OOD EM. |
 | Base model for comparison | Public `unsloth/gemma-3-4b-it` @ `bf46152c47f5dd20b896357cb51abc4c03b8ee8c` | Not re-hosted by this project |
-| VQA + text OOD **candidate pools** | Hub dataset `rlogger/ood-candidates-paper-comparable-v1` (`candidates/`, `images/`); Drive `data/ood/` when present | **Dataset build done** (400 text + 400 VQA; selection seed `20260730` → 150/250) |
+| Public VQA reconstruction pool | Hub dataset `rlogger/ood-vqa-mscoco-paper-comparable` @ `4a71750a2b7a30d76abbd7ebc4cc9dd0e03d74a0` | 400-row public pool with pinned Parquet hash; candidate input, not sealed evaluation. |
+| Combined VQA + text OOD candidate pool | Private Hub dataset `rlogger/ood-candidates-paper-comparable-v1`; Drive `data/ood/` when present | Authentication required; revision and file hashes remain unimported into the public ledger. |
 | Unreviewed / sealed eval list | Drive `data/ood/paper_comparable_ood_v1.jsonl` (+ `.meta.json` after notebook 03 seal) | Remake from Hub pools with the same selection seed if Drive copies are missing |
 | Matched OOD generation / three-seed gate | Drive `results/ood/` | Not completed |
 

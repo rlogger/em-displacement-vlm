@@ -21,6 +21,17 @@ official_vlm_alignment:
     syn_data_prompt_txt: "c45fdd04cdf61281306af79ce0db27b49df1d078bf93f27f02c333f487e6c9c4"
     em_judge_prompt_txt: "4888c6c18ae8d53f4087a31c0abdca05c88d0efbd77ead410f8625fdaa0eb23e"
     gemma3_lora_faces_notebook: "bf5ad3f682c80572e6bf60ea8a8913e4c976747e23df7b038b6997d624c66d3d"
+    qwen_2_5_vl_lora_text_notebook: "d1f1587b096196a9378eecd7b04e18d8f7406c80f6570ed380934286a62b99b1"
+    qwen_2_5_lora_text_notebook: "255da885abc2659469f010efcfd8b7a7ecc92056515d982f74abfe021dc273e1"
+  qwen_lineage:
+    vl_model: "Qwen/Qwen2.5-VL-3B-Instruct"
+    vl_notebook: "qwen-vl-lora-text.ipynb"
+    text_model: "Qwen/Qwen2.5-3B-Instruct"
+    text_notebook: "qwen-lora-text.ipynb"
+    boundary: >-
+      Both notebooks fine-tune text examples. The Qwen-VL notebook disables
+      vision-layer tuning and is loader/trainer lineage, not the paper's main
+      faces experiment or a multimodal reproduction.
 
 paper:
   title: "Narrow Fine-Tuning Erodes Safety Alignment in Vision-Language Agents"
@@ -37,6 +48,20 @@ repository_extensions:
   candidate_adapter_gate: "matched face-sanity review only; not OOD EM reproduction"
   primary_rq1: "shared-language-residual paired shifts, gated on reviewed paper-comparable OOD evidence across seeds 42/43/44"
   paper_comparability_language: "Use 'paper-comparable reconstruction', never 'exact reproduction', until exact released input assets are available."
+
+official_block_em:
+  repository: "https://github.com/ustaomeroglu/block-em"
+  commit: "12b983d1ec43d6db62f9de7c2604484995a9ac23"
+  license: "MIT"
+  paper: "https://arxiv.org/abs/2602.00767v2"
+  qwen_replication_model: "Qwen-2.5-7B-Instruct"
+  qwen_replication_modality: "text-only"
+  release_boundary: >-
+    The paper reports a model-matched Qwen replication, but the audited public
+    one-commit repository is Llama-centered and contains no Qwen-specific
+    training config, Qwen latent set, or Qwen-VL SAE path. Use the objective and
+    validation design as references; do not claim a released Qwen-VL BLOCK-EM
+    implementation.
 
 team_synthetic_variant:
   reference_notebook: "notebooks/reference/synthetic_text_gen_pipeline.ORIG.ipynb"

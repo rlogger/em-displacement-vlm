@@ -67,13 +67,22 @@ Each canonical notebook belongs to exactly one gate:
 
 Reference and manual notebooks are not canonical workflow entrypoints. CI
 rejects a missing, reordered, duplicated, or multiply owned canonical notebook.
+`00_safe_cleanup_and_reset.ipynb`, `01q_reproduce_mft_qwen2_5_vl_3b.ipynb`,
+and `05_verified_results.ipynb` are explicitly non-canonical utilities/model
+lanes: cleanup only archives, and results inspection only verifies existing
+evidence. Neither operation changes the scientific workflow status.
 
 ## Production and smoke boundaries
 
 The production paths are intentionally narrower than the package tree:
 
-- Gemma candidate training uses `scripts/ft_faces.py` and
-  `src/em_displacement_vlm/ft`.
+- Gemma and Qwen2.5-VL candidate training use `scripts/ft_faces.py` and
+  `src/em_displacement_vlm/ft`, with separate pinned configs and artifact
+  namespaces. Qwen additionally requires the platform-specific
+  `requirements/qwen-a100.lock`; only its A100-targeted dependency graph has
+  been resolver-validated. The real-construction gate has not yet run on A100.
+  The canonical notebooks and downstream OOD/RQ1 path remain Gemma-specific;
+  the Qwen G2 runbook is `docs/QWEN2_5_VL_BASELINE.md`.
 - OOD generation, blinded judging, calibration, and gate sealing use the
   dedicated OOD scripts, `src/em_displacement_vlm/evals/candidate_review.py`,
   `src/em_displacement_vlm/evals/ood_em.py`, and

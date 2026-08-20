@@ -20,6 +20,8 @@ from em_displacement_vlm.constants import (
     FACES_HF_DATASET,
     FACES_HF_REVISION,
     GEMMA3_4B_UNSLOTH_REVISION,
+    QWEN2_5_VL_3B_MODEL_ID,
+    QWEN2_5_VL_3B_REVISION,
 )
 from em_displacement_vlm.data import frozen_split_provenance
 from em_displacement_vlm.evals.sanity_em import (
@@ -35,8 +37,13 @@ from em_displacement_vlm.evals.sanity_em import (
     save_check_bundle,
     validate_sanity_config,
 )
+from em_displacement_vlm.ft import assert_qwen_a100_runtime
 from em_displacement_vlm.paths import results_dir
-from em_displacement_vlm.runs import ResultsLogger, require_run_contract
+from em_displacement_vlm.runs import (
+    ResultsLogger,
+    require_clean_git_worktree,
+    require_run_contract,
+)
 from em_displacement_vlm.runtime import detach_inherited_wandb_service
 
 
@@ -144,6 +151,19 @@ def main() -> int:
         ),
     )
     validate_sanity_config(cfg)
+    qwen_runtime = None
+    if cfg.base_model_id == QWEN2_5_VL_3B_MODEL_ID:
+        if cfg.base_model_revision != QWEN2_5_VL_3B_REVISION:
+            raise SystemExit(
+                "Qwen candidate sanity requires the pinned Qwen2.5-VL 3B revision."
+            )
+        if cfg.load_in_4bit:
+            raise SystemExit("Qwen candidate sanity requires BF16 loading, not 4-bit loading.")
+        try:
+            require_clean_git_worktree(expected_commit=ctx.commit)
+            qwen_runtime = assert_qwen_a100_runtime()
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
     split_root = Path(cfg.split_root) if cfg.split_root else None
     split_provenance = frozen_split_provenance(
         split_root,
@@ -178,6 +198,8 @@ def main() -> int:
         "evidence": evidence_scope,
         "evidence_tier": evidence_scope["evidence_tier"],
     }
+    if qwen_runtime is not None:
+        evidence_provenance["runtime"] = qwen_runtime
 
     if cfg.use_wandb:
         import wandb

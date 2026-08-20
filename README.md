@@ -9,6 +9,9 @@ text-pathway intervention removes or relocates the signal.
 [![Review candidate](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/02_review_candidate_adapter.ipynb)
 [![OOD baseline](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/03_ood_em_baseline.ipynb)
 [![RQ1 geometry](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/04_rq1_shared_residual_geometry.ipynb)
+[![Qwen2.5-VL candidate](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb)
+[![Safe Drive cleanup](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_safe_cleanup_and_reset.ipynb)
+[![Verified results](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/05_verified_results.ipynb)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -40,6 +43,18 @@ A seed-42 **plumbing** extraction may be used to test the pipeline after that
 seed's candidate-adapter face-sanity review. It is labelled a pilot and cannot
 support an RQ1 claim. Primary RQ1 waits for all three reviewed **OOD** baseline
 packages and sealed probe manifests.
+
+## Candidate-training model lanes
+
+- **Gemma 3-4B** remains the canonical end-to-end protocol and the only model
+  family referenced by the current OOD/RQ1 notebooks.
+- **Qwen2.5-VL 3B** has a separately pinned BF16 LoRA candidate-training lane
+  through the shared provenance-bound runner and a CUDA 12.8 hash lock. The
+  config/unit contracts and dependency resolution pass locally; real
+  model/trainer construction and training remain `A100_UNRUN`. Follow
+  [QWEN2_5_VL_BASELINE.md](docs/QWEN2_5_VL_BASELINE.md). Qwen adapters, reviews,
+  layers, and activation artifacts must remain separate from Gemma evidence;
+  Qwen OOD/RQ1 support is not yet declared complete.
 
 ## Research questions
 
@@ -84,6 +99,8 @@ Model states are kept distinct: `M_base` → `M_ft` (baseline subject) →
 
 See [notebooks/README.md](notebooks/README.md) for exact notebook order and
 [REPRODUCIBILITY.md](REPRODUCIBILITY.md) for the evidence contract.
+The presentation-safe, artifact-bound result ledger is in
+[RESULTS.md](docs/RESULTS.md); slide-only observations are excluded from it.
 
 ## How the team artifacts fit together
 
@@ -129,7 +146,7 @@ small template bank into more independent observations.
 em-displacement-vlm/
 ├── src/em_displacement_vlm/
 │   ├── data/                  # immutable role manifests and contamination checks
-│   ├── ft/                    # Gemma/Unsloth candidate-adapter training
+│   ├── ft/                    # Gemma/Qwen Unsloth candidate-adapter training
 │   ├── evals/                 # face sanity, OOD generation/judge/review contracts
 │   ├── rq1.py                 # production shared-language-residual RQ1 path
 │   ├── extraction/, interventions/
@@ -152,6 +169,8 @@ validated from `protocols/workflow.yaml` in CI.
 
 Python 3.11+ and [uv](https://github.com/astral-sh/uv) are sufficient for
 data-preparation and smoke checks; they do not reproduce the Gemma experiment.
+The setup script places the environment outside the repository and links it as
+`.venv`, avoiding iCloud `dataless` package placeholders on macOS.
 
 ```bash
 git clone https://github.com/rlogger/em-displacement-vlm.git
@@ -165,6 +184,11 @@ python scripts/check_disjointness.py
 pytest -q
 python scripts/smoke_test.py --config configs/smoke.yaml
 ```
+
+Those broad extras are the local engineering/processor environment, not the
+Unsloth training environment. Qwen A100 work must use
+[`requirements/qwen-a100.lock`](requirements/qwen-a100.lock) and the exact
+construction gate in the Qwen runbook.
 
 Large adapters, activations, and response bundles belong on Drive or the Hub,
 not in git. Do not commit tokens, raw generated responses, or human-review

@@ -3,6 +3,8 @@
 Use the status vocabulary in [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md):
 `CODE_VERIFIED` means engineering validation; `A100_UNRUN` and
 `RESULT_UNVERIFIED` mean no scientific conclusion is supported yet.
+For a new model family, config/unit validation alone is reported explicitly and
+does not earn `CODE_VERIFIED` until the real locked trainer completes its GPU smoke.
 
 | Gate | Requirement | Current status | Evidence / location |
 |---|---|---|---|
@@ -11,6 +13,7 @@ Use the status vocabulary in [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md):
 | G1 | 1,500-row HF-backed induction role | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/prepare_datasets.py --use-hf` |
 | G1 | Hash/source-row disjoint roles | `CODE_VERIFIED`; `A100_UNRUN` | `scripts/check_disjointness.py` |
 | G2 | Candidate `r=32` FT + recovery checkpoints | `CODE_VERIFIED`; team Colab adapters on Drive/Hub | `scripts/ft_faces.py`, notebook 01; Hub `rlogger/FT_R32_gemma3_faces_seed{42,43,44}` |
+| G2 | Qwen2.5-VL 3B candidate `r=32` FT lane | Config/unit validated + A100-targeted dependency graph resolver-validated/hash-locked; real trainer construction and training `A100_UNRUN` | `configs/reproduce_mft_qwen2_5_vl_3b.yaml`, `requirements/qwen-a100.lock`, `docs/QWEN2_5_VL_BASELINE.md`; no Qwen adapter/evidence yet |
 | G3 | Matched face-sanity base/FT review | `CODE_VERIFIED`; candidate reviews on Drive/Hub | `02_review_candidate_adapter.ipynb`, `BEHAVIORAL_REVIEW.md` |
 | G3 | Candidate gate explicitly distinct from OOD EM | `CODE_VERIFIED`; `RESULT_UNVERIFIED` | docs + guarded RQ1 config |
 | G4 | Paper-comparable OOD **candidate pools** (400 text + 400 VQA) | `CODE_VERIFIED`; Hub dataset built | `build_ood_candidate_pools.py`; Hub `ood-candidates-paper-comparable-v1` |

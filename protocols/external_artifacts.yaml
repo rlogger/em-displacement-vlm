@@ -1,0 +1,109 @@
+schema_version: 1
+as_of: "2026-08-19"
+claim_boundary: >-
+  Immutable public candidate-adapter reviews are artifact-backed face-domain
+  sanity results. They are not OOD emergent-misalignment, RQ1, or intervention
+  results.
+
+candidate_adapters:
+  - model_family: gemma3
+    seed: 42
+    repo_id: rlogger/FT_R32_gemma3_faces_seed42
+    revision: f8ba9b90f694db7edc0611735a872608be6b3ea3
+    review_file: review_seed42_summary.json
+    review_sha256: f5b1fafdfdc9be28b5056ac914b26a549878174390be1805a2b09b85a826fe7b
+    adapter_file: adapter_model.safetensors
+    adapter_lfs_sha256: b6a6bb9d50fdc8b6ab858c41d747ffb17b2c19e06d60e96c102f3eb071046e72
+    adapter_fingerprint: 6765cfa4e861cf2e63a897a0b13661770b08272d1ff4aa64630c98841e254c70
+    source_commit: 74900e56d6707356c695367e96a86a1efcff1b88
+    split_manifest_sha256: f5917e65df4e4c38be193d52805b7a6404709656dfe25b9d3b9a6b50511c6fae
+    conditions:
+      base:
+        n_samples: 52
+        n_responses: 156
+        harmful_response_rate: 0.14743589743589744
+        severe_response_rate: 0.03205128205128205
+        worst_of_n_harmful_sample_rate: 0.19230769230769232
+        worst_of_n_severe_sample_rate: 0.07692307692307693
+      ft:
+        n_samples: 52
+        n_responses: 156
+        harmful_response_rate: 0.9935897435897436
+        severe_response_rate: 0.9423076923076923
+        worst_of_n_harmful_sample_rate: 1.0
+        worst_of_n_severe_sample_rate: 1.0
+  - model_family: gemma3
+    seed: 43
+    repo_id: rlogger/FT_R32_gemma3_faces_seed43
+    revision: 83d6466645fca9e65af2f64c2dcc0cc7e468cfd2
+    review_file: review_seed43_summary.json
+    review_sha256: 4e9d7a5d23cb93b274692ed043b54bcef767ea06c6879f39956035028fd363aa
+    adapter_file: adapter_model.safetensors
+    adapter_lfs_sha256: 2ef9e0a96a27efe63240e12517b0cce635d024791b0cee69dea7e91841f1ac3f
+    adapter_fingerprint: 26a2b429ee4743dd27fb456e8bc38d2d431c5d7b0198df49f70a791ddac7fa72
+    source_commit: 21d4e2a845a90578bc8c78ea5f100b4556fecf39
+    split_manifest_sha256: f5917e65df4e4c38be193d52805b7a6404709656dfe25b9d3b9a6b50511c6fae
+    conditions:
+      base:
+        n_samples: 52
+        n_responses: 156
+        harmful_response_rate: 0.15384615384615385
+        severe_response_rate: 0.019230769230769232
+        worst_of_n_harmful_sample_rate: 0.19230769230769232
+        worst_of_n_severe_sample_rate: 0.019230769230769232
+      ft:
+        n_samples: 52
+        n_responses: 156
+        harmful_response_rate: 0.9935897435897436
+        severe_response_rate: 0.9038461538461539
+        worst_of_n_harmful_sample_rate: 1.0
+        worst_of_n_severe_sample_rate: 0.9615384615384616
+  - model_family: gemma3
+    seed: 44
+    repo_id: rlogger/FT_R32_gemma3_faces_seed44
+    revision: 149a9795a119e46ae6060611db61b507904d211c
+    review_file: review_seed44_summary.json
+    review_sha256: 97937184dcc95fa0fe60af07e522e27a629cea23362a7cf70f9b5bfd2101f381
+    adapter_file: adapter_model.safetensors
+    adapter_lfs_sha256: 856b624e8ec1776ecdec9dbddeb09419144f37d00b9176b0b4162bccbfc99c60
+    adapter_fingerprint: 081d55f412ed51877cf3000aaf086cc676fcbf43174e47029cb364f69920b088
+    source_commit: 21d4e2a845a90578bc8c78ea5f100b4556fecf39
+    split_manifest_sha256: f5917e65df4e4c38be193d52805b7a6404709656dfe25b9d3b9a6b50511c6fae
+    conditions:
+      base:
+        n_samples: 52
+        n_responses: 156
+        harmful_response_rate: 0.23076923076923078
+        severe_response_rate: 0.08333333333333333
+        worst_of_n_harmful_sample_rate: 0.3076923076923077
+        worst_of_n_severe_sample_rate: 0.15384615384615385
+      ft:
+        n_samples: 52
+        n_responses: 156
+        harmful_response_rate: 0.9871794871794872
+        severe_response_rate: 0.9615384615384616
+        worst_of_n_harmful_sample_rate: 1.0
+        worst_of_n_severe_sample_rate: 1.0
+
+base_model:
+  repo_id: unsloth/gemma-3-4b-it
+  revision: bf46152c47f5dd20b896357cb51abc4c03b8ee8c
+
+datasets:
+  - role: public_vqa_reconstruction
+    repo_id: rlogger/ood-vqa-mscoco-paper-comparable
+    revision: 4a71750a2b7a30d76abbd7ebc4cc9dd0e03d74a0
+    private: false
+    rows: 400
+    data_file: data/train-00000-of-00001.parquet
+    data_lfs_sha256: f3ae1c2a254871d34db79549a22d29dc695fa3272be0ff61aaf8c254be02ceb5
+    interpretation: >-
+      Public 400-row VQAv2/MSCOCO reconstruction candidate pool; deterministic
+      source for a 250-row evaluation draw, not a sealed OOD result.
+  - role: combined_candidate_pool
+    repo_id: rlogger/ood-candidates-paper-comparable-v1
+    revision: null
+    private: true
+    interpretation: >-
+      Authentication is required. A revision and file hashes must be imported
+      from the authenticated Colab audit before this can count as pinned input.

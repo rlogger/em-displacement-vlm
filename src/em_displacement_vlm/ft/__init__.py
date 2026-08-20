@@ -1,7 +1,9 @@
-"""Unsloth Gemma3-4B faces fine-tune helpers (ported from lin-vsar-algoverse).
+"""Provenance-bound Gemma 3 and Qwen2.5-VL faces fine-tune helpers.
 
 Original notebook: gemma3_4B_lora_faces_ft.ipynb
-Playbook defaults: r=32, α=r, 1 epoch, lr=2e-4, vision+language all-linear LoRA.
+Shared baseline defaults: r=32, α=r, 1 epoch, lr=2e-4, vision+language
+all-linear LoRA.  A Qwen run is an independent replication model and does not
+inherit evidence from a Gemma adapter.
 """
 
 from __future__ import annotations
@@ -23,10 +25,33 @@ from em_displacement_vlm.constants import (
     FACES_HARMFUL_N,
     FACES_HF_DATASET,
     FACES_HF_REVISION,
+    GEMMA3_4B_MODEL_ID,
     GEMMA3_4B_UNSLOTH_REVISION,
+    QWEN2_5_VL_3B_MODEL_ID,
+    QWEN2_5_VL_3B_REVISION,
 )
 
-DEFAULT_BASE_MODEL = "unsloth/gemma-3-4b-it"
+DEFAULT_BASE_MODEL = GEMMA3_4B_MODEL_ID
+MODEL_FAMILY_GEMMA3 = "gemma3"
+MODEL_FAMILY_QWEN2_5_VL = "qwen2_5_vl"
+SUPPORTED_MODEL_FAMILIES = frozenset({MODEL_FAMILY_GEMMA3, MODEL_FAMILY_QWEN2_5_VL})
+NATIVE_CHAT_TEMPLATE = "native"
+QWEN_A100_RUNTIME_VERSIONS = {
+    "accelerate": "1.14.0",
+    "bitsandbytes": "0.50.1",
+    "datasets": "4.3.0",
+    "huggingface-hub": "0.36.2",
+    "peft": "0.20.0",
+    "qwen-vl-utils": "0.0.14",
+    "torch": "2.10.0+cu128",
+    "torchao": "0.16.0+cu128",
+    "torchvision": "0.25.0+cu128",
+    "transformers": "4.56.2",
+    "trl": "0.22.2",
+    "unsloth": "2026.8.18",
+    "unsloth-zoo": "2026.8.12",
+    "xformers": "0.0.34",
+}
 
 # This records source-lineage protocol information only.  The upstream project
 # has no license and its unreleased OOD inputs are not copied into this repo.
@@ -54,6 +79,7 @@ HARMFUL_SYSTEM_PROMPT = ""
 
 @dataclass
 class FacesFTConfig:
+    model_family: str = MODEL_FAMILY_GEMMA3
     base_model: str = DEFAULT_BASE_MODEL
     base_model_revision: str = GEMMA3_4B_UNSLOTH_REVISION
     dataset_id: str = FACES_HF_DATASET
@@ -110,6 +136,118 @@ def effective_training_config(cfg: FacesFTConfig) -> dict[str, Any]:
     return payload
 
 
+def model_family_defaults(model_family: str) -> dict[str, str]:
+    """Return immutable model defaults for a supported production family."""
+    family = str(model_family).strip().lower()
+    if family == MODEL_FAMILY_GEMMA3:
+        return {
+            "model_family": family,
+            "model_id": DEFAULT_BASE_MODEL,
+            "model_revision": GEMMA3_4B_UNSLOTH_REVISION,
+            "chat_template": "gemma-3",
+            "artifact_slug": "gemma3",
+        }
+    if family == MODEL_FAMILY_QWEN2_5_VL:
+        return {
+            "model_family": family,
+            "model_id": QWEN2_5_VL_3B_MODEL_ID,
+            "model_revision": QWEN2_5_VL_3B_REVISION,
+            "chat_template": NATIVE_CHAT_TEMPLATE,
+            "artifact_slug": "qwen2_5_vl_3b",
+        }
+    raise ValueError(
+        f"Unsupported model_family {model_family!r}; expected one of "
+        f"{sorted(SUPPORTED_MODEL_FAMILIES)}."
+    )
+
+
+def validate_model_family_contract(cfg: FacesFTConfig) -> None:
+    """Reject accidental model-family or chat-template substitutions."""
+    defaults = model_family_defaults(cfg.model_family)
+    family = defaults["model_family"]
+    if cfg.model_family != family:
+        raise ValueError(f"model_family must use canonical spelling {family!r}.")
+    model_name = cfg.base_model.lower()
+    if family == MODEL_FAMILY_GEMMA3:
+        if "gemma-3" not in model_name:
+            raise ValueError("model_family='gemma3' requires a Gemma 3 checkpoint.")
+        if (
+            cfg.base_model == DEFAULT_BASE_MODEL
+            and cfg.base_model_revision != GEMMA3_4B_UNSLOTH_REVISION
+        ):
+            raise ValueError("The canonical Gemma 3 checkpoint requires its pinned revision.")
+    elif family == MODEL_FAMILY_QWEN2_5_VL:
+        if "qwen2.5-vl" not in model_name:
+            raise ValueError(
+                "model_family='qwen2_5_vl' requires a Qwen2.5-VL checkpoint; "
+                "Qwen2-VL and Qwen3-VL are separate experimental conditions."
+            )
+        if cfg.base_model != QWEN2_5_VL_3B_MODEL_ID:
+            raise ValueError(
+                "The registered qwen2_5_vl lane is Qwen2.5-VL 3B only; add a separate "
+                "model-family config and artifact namespace for another size."
+            )
+        if cfg.base_model_revision != QWEN2_5_VL_3B_REVISION:
+            raise ValueError(
+                "The canonical Qwen2.5-VL 3B checkpoint requires its pinned revision."
+            )
+    if cfg.chat_template != defaults["chat_template"]:
+        raise ValueError(
+            f"{cfg.model_family} requires chat_template={defaults['chat_template']!r}; "
+            f"got {cfg.chat_template!r}."
+        )
+
+
+def validate_primary_faces_ft_contract(cfg: FacesFTConfig) -> None:
+    """Reject scientific-condition drift in the registered Qwen faces baseline.
+
+    Paths, checkpoint cadence, tracking, and the training seed may vary.  The
+    model/data/training condition below may not: a changed value needs a new
+    named config and artifact namespace rather than a baseline-looking output.
+    Legacy Gemma rank-sweep configs retain their existing validation behavior.
+    """
+    if cfg.model_family != MODEL_FAMILY_QWEN2_5_VL:
+        return
+    expected: dict[str, Any] = {
+        "dataset_id": FACES_HF_DATASET,
+        "dataset_revision": FACES_HF_REVISION,
+        "n_samples": FACES_HARMFUL_N,
+        "lora_rank": DEFAULT_LORA_RANK,
+        "lora_alpha": DEFAULT_LORA_ALPHA,
+        "lr": DEFAULT_LR,
+        "epochs": 1.0,
+        "per_device_batch_size": 1,
+        "grad_accum": 4,
+        "max_seq_length": 4096,
+        "load_in_4bit": False,
+        "completion_only_loss": True,
+        "finetune_vision_layers": True,
+        "finetune_language_layers": True,
+        "finetune_attention_modules": True,
+        "finetune_mlp_modules": True,
+        "target_modules": "all-linear",
+        "bf16": True,
+        "optim": "adamw_torch_fused",
+        "max_grad_norm": 1.0,
+        "weight_decay": 0.0,
+        "warmup_steps": 0,
+        "lr_scheduler_type": "constant",
+        "gradient_checkpointing": True,
+        "system_prompt": HARMFUL_SYSTEM_PROMPT,
+    }
+    actual = asdict(cfg)
+    mismatches = [
+        f"{field}: expected {value!r}, got {actual.get(field)!r}"
+        for field, value in expected.items()
+        if actual.get(field) != value
+    ]
+    if mismatches:
+        raise ValueError(
+            "Registered faces baseline contract changed; create a separately named "
+            "experimental condition instead:\n- " + "\n- ".join(mismatches)
+        )
+
+
 def _distribution_version(name: str) -> str:
     try:
         return importlib.metadata.version(name)
@@ -121,7 +259,22 @@ def collect_runtime_metadata() -> dict[str, Any]:
     """Capture versions and accelerator identity beside every production adapter."""
     packages = {
         name: _distribution_version(name)
-        for name in ("torch", "transformers", "trl", "unsloth", "peft", "datasets", "accelerate")
+        for name in (
+            "torch",
+            "torchao",
+            "torchvision",
+            "transformers",
+            "trl",
+            "unsloth",
+            "unsloth-zoo",
+            "peft",
+            "datasets",
+            "accelerate",
+            "bitsandbytes",
+            "huggingface-hub",
+            "qwen-vl-utils",
+            "xformers",
+        )
     }
     metadata: dict[str, Any] = {
         "python": sys.version.split()[0],
@@ -140,6 +293,99 @@ def collect_runtime_metadata() -> dict[str, Any]:
     except ImportError:
         metadata["cuda_available"] = False
     return metadata
+
+
+def assert_qwen_a100_runtime() -> dict[str, Any]:
+    """Fail unless this process matches the hash-locked CUDA 12.8 runtime."""
+    metadata = collect_runtime_metadata()
+    errors: list[str] = []
+    if sys.version_info[:2] != (3, 12):
+        errors.append(f"python: expected 3.12, got {sys.version.split()[0]}")
+    packages = metadata["packages"]
+    for name, expected in QWEN_A100_RUNTIME_VERSIONS.items():
+        actual = packages.get(name, "not_installed")
+        if actual != expected:
+            errors.append(f"{name}: expected {expected}, got {actual}")
+    if metadata.get("cuda_available") is not True:
+        errors.append("CUDA is unavailable")
+    elif metadata.get("cuda_version") != "12.8":
+        errors.append(f"CUDA: expected 12.8, got {metadata.get('cuda_version')}")
+    device = str(metadata.get("cuda_device") or "")
+    if "A100" not in device:
+        errors.append(f"device: expected an NVIDIA A100, got {device or 'unknown'}")
+    try:
+        import torch
+
+        if not torch.cuda.is_bf16_supported():
+            errors.append("CUDA device does not report BF16 support")
+    except ImportError:
+        pass
+    if errors:
+        raise RuntimeError(
+            "Qwen A100 runtime does not match requirements/qwen-a100.lock:\n- "
+            + "\n- ".join(errors)
+        )
+    return metadata
+
+
+def collect_trainable_parameter_manifest(
+    model: Any,
+    *,
+    require_vision: bool,
+    require_language: bool,
+) -> dict[str, Any]:
+    """Record and validate the resolved LoRA surface before optimization."""
+    trainable: list[tuple[str, int]] = []
+    total_parameters = 0
+    for name, parameter in model.named_parameters():
+        count = int(parameter.numel())
+        total_parameters += count
+        if bool(getattr(parameter, "requires_grad", False)):
+            trainable.append((str(name), count))
+    if not trainable:
+        raise RuntimeError("LoRA attachment produced no trainable parameters.")
+
+    lowered = [name.lower() for name, _ in trainable]
+    vision_names = [
+        name
+        for name in lowered
+        if any(marker in name for marker in ("vision", "visual", "image_tower"))
+    ]
+    language_names = [
+        name
+        for name in lowered
+        if any(
+            marker in name
+            for marker in ("language_model", "language", "model.layers", "text_model")
+        )
+        and name not in vision_names
+    ]
+    if require_vision and not vision_names:
+        raise RuntimeError(
+            "Configured vision LoRA has no trainable parameter names in the vision pathway."
+        )
+    if require_language and not language_names:
+        raise RuntimeError(
+            "Configured language LoRA has no trainable parameter names in the language pathway."
+        )
+
+    digest = sha256()
+    for name, count in sorted(trainable):
+        digest.update(f"{name}\0{count}\n".encode())
+    trainable_parameters = sum(count for _, count in trainable)
+    return {
+        "schema_version": 1,
+        "total_parameters": total_parameters,
+        "trainable_parameters": trainable_parameters,
+        "trainable_fraction": (
+            trainable_parameters / total_parameters if total_parameters else 0.0
+        ),
+        "trainable_tensor_count": len(trainable),
+        "vision_trainable_tensor_count": len(vision_names),
+        "language_trainable_tensor_count": len(language_names),
+        "trainable_parameter_names_sha256": digest.hexdigest(),
+        "trainable_parameter_names": [name for name, _ in sorted(trainable)],
+    }
 
 
 def resolve_faces_dataset_id(preferred: str | None = None) -> str:
@@ -313,19 +559,84 @@ def apply_and_assert_gemma3_chat_template(processor: Any, *, template: str = "ge
     return processor
 
 
+def assert_qwen2_5_vl_native_chat_template(
+    processor: Any,
+    *,
+    template: str = NATIVE_CHAT_TEMPLATE,
+) -> Any:
+    """Prove that the checkpoint-native Qwen2.5-VL multimodal template is active.
+
+    Qwen2.5-VL has a dynamic image-token count. This check deliberately validates
+    the native vision sentinels instead of installing a Gemma template or relying
+    on a fixed token boundary.
+    """
+    if template != NATIVE_CHAT_TEMPLATE:
+        raise ValueError(
+            f"Qwen2.5-VL requires its checkpoint-native template, not {template!r}."
+        )
+    if not hasattr(processor, "apply_chat_template") or not hasattr(processor, "tokenizer"):
+        raise RuntimeError("Qwen2.5-VL checkpoint did not return a usable VLM processor.")
+
+    probe_messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": "Template verification."},
+            ],
+        }
+    ]
+    try:
+        rendered = processor.apply_chat_template(
+            probe_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Qwen2.5-VL native chat template could not render a multimodal turn."
+        ) from exc
+    required_sentinels = ("<|vision_start|>", "<|image_pad|>", "<|vision_end|>")
+    missing = [token for token in required_sentinels if token not in str(rendered)]
+    if missing:
+        raise RuntimeError(
+            "Qwen2.5-VL native template omitted required image sentinels: "
+            + ", ".join(missing)
+        )
+    tokenizer = processor.tokenizer
+    token_ids = [tokenizer.convert_tokens_to_ids(token) for token in required_sentinels]
+    if any(not isinstance(token_id, int) or token_id < 0 for token_id in token_ids):
+        raise RuntimeError("Qwen2.5-VL processor could not resolve its vision sentinel IDs.")
+    if len(set(token_ids)) != len(token_ids):
+        raise RuntimeError("Qwen2.5-VL vision sentinels resolve to non-unique token IDs.")
+    return processor
+
+
+def configure_and_assert_chat_template(processor: Any, cfg: FacesFTConfig) -> Any:
+    """Configure the exact model-family chat contract and verify one VLM turn."""
+    validate_model_family_contract(cfg)
+    if cfg.model_family == MODEL_FAMILY_GEMMA3:
+        return apply_and_assert_gemma3_chat_template(processor, template=cfg.chat_template)
+    if cfg.model_family == MODEL_FAMILY_QWEN2_5_VL:
+        return assert_qwen2_5_vl_native_chat_template(processor, template=cfg.chat_template)
+    raise AssertionError(f"Unreachable model family: {cfg.model_family!r}")
+
+
 def load_base_and_lora(cfg: FacesFTConfig) -> tuple[Any, Any]:
-    """Load Unsloth Gemma3 vision model and attach all-linear LoRA."""
+    """Load a supported Unsloth VLM backend and attach all-linear LoRA."""
     from unsloth import FastVisionModel
 
+    validate_model_family_contract(cfg)
     model, processor = FastVisionModel.from_pretrained(
         cfg.base_model,
         revision=cfg.base_model_revision,
+        max_seq_length=cfg.max_seq_length,
         load_in_4bit=cfg.load_in_4bit,
         use_gradient_checkpointing="unsloth",
     )
     if getattr(model, "peft_config", None) is not None:
         raise RuntimeError("Model already has LoRA adapters — restart the kernel.")
-    processor = apply_and_assert_gemma3_chat_template(processor, template=cfg.chat_template)
+    processor = configure_and_assert_chat_template(processor, cfg)
 
     model = FastVisionModel.get_peft_model(
         model,
@@ -369,6 +680,7 @@ def _response_only_vision_collator(
                 kwargs[candidate] = cfg.completion_only_loss
                 selected_argument = candidate
                 break
+    kwargs["max_seq_length"] = cfg.max_seq_length
     base_collator = UnslothVisionDataCollator(model, processor, **kwargs)
     collator = ResponseOnlyVisionDataCollator(
         base_collator,
@@ -378,6 +690,7 @@ def _response_only_vision_collator(
     return collator, {
         "class": "ResponseOnlyVisionDataCollator(UnslothVisionDataCollator)",
         "explicit_response_only_argument": selected_argument,
+        "max_seq_length": cfg.max_seq_length,
         "completion_only_loss_via_trl": cfg.completion_only_loss,
         "wrapper_enforces_response_only": True,
     }
@@ -423,7 +736,7 @@ class ResponseOnlyVisionDataCollator:
     """Mask every prompt/image token after Unsloth prepares a VLM batch.
 
     The wrapper does not trust a version-specific implicit mask.  It derives
-    assistant boundaries from the same Gemma-3 processor and rejects any
+    assistant boundaries from the same model-family processor and rejects any
     sequence-length change, which makes image-token truncation observable.
     """
 
@@ -597,8 +910,10 @@ def build_sft_trainer(model: Any, processor: Any, train_data: list[dict], cfg: F
         raise ValueError("Primary faces FT requires completion_only_loss=True.")
     if not cfg.bf16:
         raise ValueError("Primary faces FT requires bf16=True to match the pinned A100 protocol.")
+    validate_model_family_contract(cfg)
     FastVisionModel.for_training(model)
-    run_name = f"gemma3-faces-lora-r{cfg.lora_rank}"
+    artifact_slug = model_family_defaults(cfg.model_family)["artifact_slug"]
+    run_name = f"{artifact_slug}-faces-lora-r{cfg.lora_rank}"
     out = cfg.output_dir or f"harmful_ft/{run_name}-harmful"
     collator, collator_contract = _response_only_vision_collator(model, processor, cfg)
 

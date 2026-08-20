@@ -1,4 +1,6 @@
-# Colab / plain-pip mirror. Prefer: pip install -e ".[torch,vlm,dev]"
+# Local/plain-pip mirror; not the Unsloth training runtime.
+# Qwen A100 training uses requirements/qwen-a100.lock instead.
+# Prefer locally: pip install -e ".[torch,vlm,dev]"
 numpy>=1.26
 pillow>=10.0
 tqdm>=4.66
@@ -7,13 +9,14 @@ python-dotenv>=1.0
 matplotlib>=3.8
 torch>=2.2
 torchvision>=0.17
-transformers>=4.40
+transformers>=4.45
 accelerate>=0.30
 datasets>=2.19
 huggingface-hub>=0.23
 safetensors>=0.4
 einops>=0.7
 peft>=0.11
+qwen-vl-utils==0.0.14
 scipy>=1.11
 ipykernel>=6.29
 wandb==0.28.1

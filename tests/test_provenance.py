@@ -10,6 +10,12 @@ from pathlib import Path
 import pytest
 import torch
 
+from em_displacement_vlm.constants import (
+    GEMMA3_4B_MODEL_ID,
+    GEMMA3_4B_UNSLOTH_REVISION,
+    QWEN2_5_VL_3B_MODEL_ID,
+    QWEN2_5_VL_3B_REVISION,
+)
 from em_displacement_vlm.data import (
     PRIMARY_MANIFEST_VERSION,
     frozen_split_provenance,
@@ -47,8 +53,12 @@ def _fixture_split(tmp_path: Path) -> dict[str, object]:
 def _adapter_with_provenance(tmp_path: Path, split: dict[str, object]) -> Path:
     adapter = tmp_path / "adapter"
     adapter.mkdir()
-    (adapter / "adapter_config.json").write_text('{"base_model_name_or_path": "base"}\n')
-    (adapter / "spec.json").write_text('{"state": "ft"}\n')
+    (adapter / "adapter_config.json").write_text(
+        json.dumps({"base_model_name_or_path": GEMMA3_4B_MODEL_ID}) + "\n"
+    )
+    (adapter / "spec.json").write_text(
+        json.dumps({"state": "ft", "model_id": GEMMA3_4B_MODEL_ID}) + "\n"
+    )
     (adapter / "adapter_model.safetensors").write_bytes(b"weights")
     reproduction = adapter / "reproduction_manifest.json"
     reproduction.write_text('{"run": "seed42"}\n')
@@ -56,6 +66,12 @@ def _adapter_with_provenance(tmp_path: Path, split: dict[str, object]) -> Path:
         "provenance": {
             "split": split,
             "reproduction_manifest_sha256": _sha256(reproduction),
+            "effective_training_config": {
+                "model_family": "gemma3",
+                "base_model": GEMMA3_4B_MODEL_ID,
+                "base_model_revision": GEMMA3_4B_UNSLOTH_REVISION,
+                "seed": 42,
+            },
             "evidence": {
                 "evidence_tier": "candidate",
                 "ood_em_reproduction_gate": "blocked_external_sealed_assets_required",
@@ -97,8 +113,9 @@ def test_local_adapter_is_bound_to_the_same_split(tmp_path: Path):
     adapter = _adapter_with_provenance(tmp_path, split)
     cfg = SanityConfig(
         model_id=str(adapter),
-        base_model_id="base",
-        base_model_revision="revision",
+        base_model_id=GEMMA3_4B_MODEL_ID,
+        base_model_revision=GEMMA3_4B_UNSLOTH_REVISION,
+        seed=42,
     )
     provenance = inspect_model_provenance(cfg, split)
     assert provenance["fingerprint"] == adapter_fingerprint(adapter)
@@ -107,6 +124,37 @@ def test_local_adapter_is_bound_to_the_same_split(tmp_path: Path):
     mismatched["manifest_sha256"] = "not-the-same"
     with pytest.raises(ValueError, match="does not match the selected frozen split"):
         inspect_model_provenance(cfg, mismatched)
+
+    with pytest.raises(ValueError, match="base model does not match"):
+        inspect_model_provenance(
+            SanityConfig(
+                model_id=str(adapter),
+                base_model_id="different-base",
+                base_model_revision=GEMMA3_4B_UNSLOTH_REVISION,
+                seed=42,
+            ),
+            split,
+        )
+    with pytest.raises(ValueError, match="revision does not match"):
+        inspect_model_provenance(
+            SanityConfig(
+                model_id=str(adapter),
+                base_model_id=GEMMA3_4B_MODEL_ID,
+                base_model_revision="different-revision",
+                seed=42,
+            ),
+            split,
+        )
+    with pytest.raises(ValueError, match="training seed does not match"):
+        inspect_model_provenance(
+            SanityConfig(
+                model_id=str(adapter),
+                base_model_id=GEMMA3_4B_MODEL_ID,
+                base_model_revision=GEMMA3_4B_UNSLOTH_REVISION,
+                seed=43,
+            ),
+            split,
+        )
 
 
 def test_sanity_sidecar_is_list_compatible_and_hash_bound(tmp_path: Path):
@@ -215,6 +263,10 @@ def test_review_binding_requires_matched_base_and_rejects_reproduced_claim(tmp_p
                     "metadata": {
                         "bundle_sha256": "ft-bundle",
                         "condition": "candidate_face_sanity",
+                        "model": {
+                            "base_model_id": GEMMA3_4B_MODEL_ID,
+                            "base_model_revision": GEMMA3_4B_UNSLOTH_REVISION,
+                        },
                         "adapter": {"kind": "local_peft_adapter", "fingerprint": fingerprint},
                         "split": split,
                         "generation": generation,
@@ -228,6 +280,10 @@ def test_review_binding_requires_matched_base_and_rejects_reproduced_claim(tmp_p
                     "metadata": {
                         "bundle_sha256": "base-bundle",
                         "condition": "candidate_face_sanity",
+                        "model": {
+                            "base_model_id": GEMMA3_4B_MODEL_ID,
+                            "base_model_revision": GEMMA3_4B_UNSLOTH_REVISION,
+                        },
                         "adapter": {"kind": "standalone_base_control"},
                         "split": split,
                         "generation": generation,
@@ -238,9 +294,106 @@ def test_review_binding_requires_matched_base_and_rejects_reproduced_claim(tmp_p
     }
     review = tmp_path / "review.json"
     review.write_text(json.dumps(summary))
-    _validate_review_binding(adapter, review, evidence_tier="candidate")
+    _, _, identity = _validate_review_binding(adapter, review, evidence_tier="candidate")
+    assert identity == {
+        "model_family": "gemma3",
+        "base_model": GEMMA3_4B_MODEL_ID,
+        "base_model_revision": GEMMA3_4B_UNSLOTH_REVISION,
+    }
     with pytest.raises(ValueError, match="paper-comparable sealed OOD"):
         _validate_review_binding(adapter, review, evidence_tier="reproduced")
+
+    (adapter / "adapter_config.json").write_text(
+        '{"base_model_name_or_path": "different-base"}\n'
+    )
+    with pytest.raises(ValueError, match="PEFT base model"):
+        _validate_review_binding(adapter, review, evidence_tier="candidate")
+    (adapter / "adapter_config.json").write_text(
+        json.dumps({"base_model_name_or_path": GEMMA3_4B_MODEL_ID}) + "\n"
+    )
+
+    (adapter / "spec.json").write_text(
+        json.dumps({"state": "ft", "model_id": "different-base"}) + "\n"
+    )
+    with pytest.raises(ValueError, match="spec base model"):
+        _validate_review_binding(adapter, review, evidence_tier="candidate")
+    (adapter / "spec.json").write_text(
+        json.dumps({"state": "ft", "model_id": GEMMA3_4B_MODEL_ID}) + "\n"
+    )
+
+    summary["provenance"]["bundles"]["ft"]["metadata"]["model"]["base_model_id"] = (
+        "different-base"
+    )
+    review.write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match="FT sanity sidecar model identity"):
+        _validate_review_binding(adapter, review, evidence_tier="candidate")
+    summary["provenance"]["bundles"]["ft"]["metadata"]["model"][
+        "base_model_id"
+    ] = GEMMA3_4B_MODEL_ID
+
+    summary["provenance"]["bundles"]["base"]["metadata"]["model"][
+        "base_model_revision"
+    ] = "different-revision"
+    review.write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match="matched base-control"):
+        _validate_review_binding(adapter, review, evidence_tier="candidate")
+
+
+def test_model_identity_accepts_registered_qwen_and_rejects_cross_family_metadata():
+    from scripts.push_adapter import _model_identity
+
+    qwen_metadata = {
+        "provenance": {
+            "effective_training_config": {
+                "model_family": "qwen2_5_vl",
+                "base_model": QWEN2_5_VL_3B_MODEL_ID,
+                "base_model_revision": QWEN2_5_VL_3B_REVISION,
+            }
+        }
+    }
+    assert _model_identity(qwen_metadata) == {
+        "model_family": "qwen2_5_vl",
+        "base_model": QWEN2_5_VL_3B_MODEL_ID,
+        "base_model_revision": QWEN2_5_VL_3B_REVISION,
+    }
+
+    metadata = {
+        "provenance": {
+            "effective_training_config": {
+                "model_family": "gemma3",
+                "base_model": QWEN2_5_VL_3B_MODEL_ID,
+                "base_model_revision": QWEN2_5_VL_3B_REVISION,
+            }
+        }
+    }
+    with pytest.raises(ValueError, match="registered publication identity"):
+        _model_identity(metadata)
+
+
+@pytest.mark.parametrize(
+    ("family", "base", "tag", "other_tag"),
+    [
+        ("gemma3", GEMMA3_4B_MODEL_ID, "- gemma3", "- qwen2-vl"),
+        ("qwen2_5_vl", QWEN2_5_VL_3B_MODEL_ID, "- qwen2.5-vl", "- gemma3"),
+    ],
+)
+def test_reviewed_adapter_model_card_uses_bound_model_family(family, base, tag, other_tag):
+    from scripts.push_adapter import _model_card
+
+    card = _model_card(
+        repo_id="owner/adapter",
+        evidence_tier="candidate",
+        adapter_hash="adapter-hash",
+        split_sha256="split-hash",
+        review_summary_sha256="review-hash",
+        model_family=family,
+        base_model=base,
+        base_model_revision="exact-revision",
+    )
+    assert tag in card
+    assert other_tag not in card
+    assert f"base_model: {base}" in card
+    assert "Base revision: `exact-revision`" in card
 
 
 def test_final_adapter_and_resume_state_are_fail_closed(tmp_path: Path):

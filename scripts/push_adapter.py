@@ -13,6 +13,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from em_displacement_vlm.constants import (  # noqa: E402
+    GEMMA3_4B_MODEL_ID,
+    GEMMA3_4B_UNSLOTH_REVISION,
+    QWEN2_5_VL_3B_MODEL_ID,
+    QWEN2_5_VL_3B_REVISION,
+)
 from em_displacement_vlm.evals.sanity_em import adapter_fingerprint  # noqa: E402
 
 
@@ -73,7 +79,7 @@ def _validate_review_binding(
     review_summary_path: Path,
     *,
     evidence_tier: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
     """Require a passed, paired base/adapter review bound to this exact local adapter."""
     required = (
         "adapter_config.json",
@@ -93,6 +99,28 @@ def _validate_review_binding(
     expected_split = training_provenance.get("split")
     if not isinstance(expected_split, dict):
         raise ValueError("Adapter training provenance has no bound split identity.")
+    training_config = training_provenance.get("effective_training_config")
+    if not isinstance(training_config, dict):
+        raise ValueError("Adapter training provenance has no effective training config.")
+    model_identity = _model_identity(run_metadata)
+    expected_base = model_identity["base_model"]
+    adapter_config = _read_json(
+        adapter_dir / "adapter_config.json",
+        label="Adapter PEFT config",
+    )
+    stored_base = str(adapter_config.get("base_model_name_or_path") or "")
+    if stored_base != expected_base:
+        raise ValueError(
+            "Adapter PEFT base model does not match its effective training provenance: "
+            f"{stored_base!r} != {expected_base!r}."
+        )
+    adapter_spec = _read_json(adapter_dir / "spec.json", label="Adapter model spec")
+    spec_base = str(adapter_spec.get("model_id") or "")
+    if spec_base != expected_base:
+        raise ValueError(
+            "Adapter spec base model does not match its effective training provenance: "
+            f"{spec_base!r} != {expected_base!r}."
+        )
 
     summary = _read_json(review_summary_path, label="Review summary")
     if summary.get("behavioral_gate") != "pass":
@@ -115,6 +143,10 @@ def _validate_review_binding(
             f"fingerprint; found {len(matched_adapter_bundles)}."
         )
     adapter_bundle = matched_adapter_bundles[0]
+    if not _sidecar_matches_model(adapter_bundle, model_identity):
+        raise ValueError(
+            "Reviewed FT sanity sidecar model identity does not match adapter training provenance."
+        )
     bundle_split = adapter_bundle.get("split")
     if not isinstance(bundle_split, dict) or not _same_split_identity(bundle_split, expected_split):
         raise ValueError("Reviewed FT sanity bundle is bound to a different frozen split.")
@@ -132,6 +164,7 @@ def _validate_review_binding(
         and isinstance(entry.get("split"), dict)
         and _same_split_identity(entry["split"], expected_split)
         and entry.get("generation") == generation
+        and _sidecar_matches_model(entry, model_identity)
     ]
     if len(base_matches) != 1:
         raise ValueError(
@@ -159,7 +192,49 @@ def _validate_review_binding(
             )
     else:  # argparse validates this, retained for programmatic callers.
         raise ValueError(f"Unsupported evidence tier: {evidence_tier!r}")
-    return run_metadata, adapter_bundle
+    return run_metadata, adapter_bundle, model_identity
+
+
+def _model_identity(run_metadata: dict[str, Any]) -> dict[str, str]:
+    """Return an exact registered family, base ID, and revision from provenance."""
+    provenance = run_metadata.get("provenance")
+    training_config = (
+        provenance.get("effective_training_config") if isinstance(provenance, dict) else None
+    )
+    if not isinstance(training_config, dict):
+        raise ValueError("Adapter has no effective training config for its model card.")
+    base_model = str(training_config.get("base_model") or "")
+    revision = str(training_config.get("base_model_revision") or "")
+    family = str(training_config.get("model_family") or "")
+    registered_models = {
+        "gemma3": (GEMMA3_4B_MODEL_ID, GEMMA3_4B_UNSLOTH_REVISION),
+        "qwen2_5_vl": (QWEN2_5_VL_3B_MODEL_ID, QWEN2_5_VL_3B_REVISION),
+    }
+    if family not in registered_models:
+        raise ValueError(f"Unsupported or missing model family in training provenance: {family!r}.")
+    if not base_model or not revision:
+        raise ValueError("Model-card provenance requires an exact base model and revision.")
+    expected_base, expected_revision = registered_models[family]
+    if (base_model, revision) != (expected_base, expected_revision):
+        raise ValueError(
+            "Model family/base/revision do not match the registered publication identity: "
+            f"{family!r} requires {expected_base!r} @ {expected_revision!r}, got "
+            f"{base_model!r} @ {revision!r}."
+        )
+    return {
+        "model_family": family,
+        "base_model": base_model,
+        "base_model_revision": revision,
+    }
+
+
+def _sidecar_matches_model(entry: dict[str, Any], identity: dict[str, str]) -> bool:
+    model = entry.get("model")
+    return bool(
+        isinstance(model, dict)
+        and model.get("base_model_id") == identity["base_model"]
+        and model.get("base_model_revision") == identity["base_model_revision"]
+    )
 
 
 def _model_card(
@@ -169,6 +244,9 @@ def _model_card(
     adapter_hash: str,
     split_sha256: str,
     review_summary_sha256: str,
+    model_family: str,
+    base_model: str,
+    base_model_revision: str,
 ) -> str:
     if evidence_tier == "candidate":
         status = "Unverified candidate — not an OOD EM reproduction."
@@ -179,12 +257,16 @@ def _model_card(
     else:
         status = "Reviewed paper-comparable OOD reproduction evidence recorded."
         scope = "See the bound review and provenance artifacts for the exact evaluation protocol."
+    family_tag = {"gemma3": "gemma3", "qwen2_5_vl": "qwen2.5-vl"}.get(model_family)
+    if family_tag is None:
+        raise ValueError(f"Unsupported model family for Hub card: {model_family!r}.")
     return "\n".join(
         [
             "---",
             "library_name: peft",
+            f"base_model: {base_model}",
             "tags:",
-            "- gemma3",
+            f"- {family_tag}",
             "- lora",
             "- research",
             "---",
@@ -197,6 +279,9 @@ def _model_card(
             "",
             "## Bound provenance",
             "",
+            f"- Model family: `{model_family}`",
+            f"- Base model: `{base_model}`",
+            f"- Base revision: `{base_model_revision}`",
             f"- Adapter fingerprint: `{adapter_hash}`",
             f"- Frozen split manifest SHA-256: `{split_sha256}`",
             f"- Review summary SHA-256: `{review_summary_sha256}`",
@@ -231,7 +316,7 @@ def main() -> int:
     if not review_summary.is_file():
         raise SystemExit(f"Review summary does not exist: {review_summary}")
     try:
-        run_metadata, adapter_bundle = _validate_review_binding(
+        run_metadata, adapter_bundle, model_identity = _validate_review_binding(
             adapter_dir,
             review_summary,
             evidence_tier=args.evidence_tier,
@@ -249,6 +334,9 @@ def main() -> int:
         adapter_hash=fingerprint,
         split_sha256=str(split["manifest_sha256"]),
         review_summary_sha256=_sha256_file(review_summary),
+        model_family=model_identity["model_family"],
+        base_model=model_identity["base_model"],
+        base_model_revision=model_identity["base_model_revision"],
     )
     api = HfApi()
     api.create_repo(args.repo_id, repo_type="model", private=not args.public, exist_ok=True)

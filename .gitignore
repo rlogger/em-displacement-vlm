@@ -22,7 +22,9 @@ wheels/
 MANIFEST
 
 # Virtual environments
+.venv
 .venv/
+.venv.icloud-stale*/
 venv/
 ENV/
 env/

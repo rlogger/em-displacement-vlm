@@ -20,14 +20,17 @@ torch = [
   "torch>=2.2",
   "torchvision>=0.17",
 ]
+# Local processor/evaluation stack. Qwen Unsloth training uses the separate
+# platform-specific requirements/qwen-a100.lock.
 vlm = [
-  "transformers>=4.40",
+  "transformers>=4.45",
   "accelerate>=0.30",
   "datasets>=2.19",
   "huggingface-hub>=0.23",
   "safetensors>=0.4",
   "einops>=0.7",
   "peft>=0.11",
+  "qwen-vl-utils==0.0.14",
   "scipy>=1.11",
 ]
 dev = [

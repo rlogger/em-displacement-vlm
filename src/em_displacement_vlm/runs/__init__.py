@@ -96,6 +96,48 @@ def git_commit(cwd: Path | None = None) -> str:
         return "unknown"
 
 
+def git_worktree_changes(cwd: Path | None = None) -> tuple[str, ...]:
+    """Return tracked and untracked changes that are absent from ``HEAD``."""
+    root = cwd or repo_root()
+    try:
+        out = subprocess.check_output(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError("Cannot establish a clean git worktree for run provenance.") from exc
+    return tuple(line for line in out.splitlines() if line.strip())
+
+
+def require_clean_git_worktree(
+    cwd: Path | None = None,
+    *,
+    expected_commit: str | None = None,
+) -> str:
+    """Return ``HEAD`` only when every source/config change is committed."""
+    root = cwd or repo_root()
+    commit = git_commit(root)
+    if commit == "unknown":
+        raise RuntimeError("Cannot resolve git HEAD; refusing a provenance-bound run.")
+    if expected_commit is not None and commit != expected_commit:
+        raise RuntimeError(
+            "Git HEAD changed after the run contract was created: "
+            f"expected {expected_commit}, got {commit}."
+        )
+    changes = git_worktree_changes(root)
+    if changes:
+        preview = "\n".join(changes[:10])
+        suffix = "\n..." if len(changes) > 10 else ""
+        raise RuntimeError(
+            "Production runs require a clean git worktree so the recorded commit contains "
+            f"the executed code. Commit or intentionally discard these changes first:\n"
+            f"{preview}{suffix}"
+        )
+    return commit
+
+
 def require_run_contract(
     config_path: str | Path,
     *,

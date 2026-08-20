@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fine-tune Gemma3-4B on faces (Unsloth) — CLI wrapper for A100 / Colab.
+"""Fine-tune a supported VLM on the frozen faces role with audited LoRA SFT.
 
 Runs only after ``prepare_datasets.py --use-hf`` has frozen a real-data role
 manifest. The trainer rehydrates *that exact* 1,500-row role rather than
@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import sys
+import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -24,21 +27,30 @@ from em_displacement_vlm.constants import (
     DEFAULT_SEED,
     FACES_HF_DATASET,
     FACES_HF_REVISION,
-    GEMMA3_4B_UNSLOTH_REVISION,
 )
 from em_displacement_vlm.data import frozen_split_provenance, load_and_assert_disjoint
 from em_displacement_vlm.ft import (
     FacesFTConfig,
+    assert_qwen_a100_runtime,
     build_converted_dataset,
     build_sft_trainer,
     collect_runtime_metadata,
+    collect_trainable_parameter_manifest,
     effective_training_config,
     load_base_and_lora,
     load_frozen_faces_harmful,
+    model_family_defaults,
+    validate_model_family_contract,
+    validate_primary_faces_ft_contract,
 )
 from em_displacement_vlm.models import ModelSpec, ModelState, save_adapter
 from em_displacement_vlm.paths import checkpoint_dir, data_dir
-from em_displacement_vlm.runs import ResultsLogger, RunContext, require_run_contract
+from em_displacement_vlm.runs import (
+    ResultsLogger,
+    RunContext,
+    require_clean_git_worktree,
+    require_run_contract,
+)
 from em_displacement_vlm.runtime import (
     detach_inherited_wandb_service,
     is_wandb_run_in_use_error,
@@ -58,6 +70,40 @@ def _as_bool(value: object, *, field: str) -> bool:
     if isinstance(value, int) and value in {0, 1}:
         return bool(value)
     raise ValueError(f"{field} must be a boolean, not {value!r}.")
+
+
+def _require_finite_training_loss(stats: object) -> float:
+    """Return the trainer loss only when it is present, numeric, and finite."""
+    loss_value = getattr(stats, "training_loss", None)
+    if loss_value is None:
+        raise RuntimeError("Trainer returned no training_loss; refusing to save an adapter.")
+    try:
+        loss = float(loss_value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Trainer returned a non-numeric training_loss: {loss_value!r}."
+        ) from exc
+    if not math.isfinite(loss):
+        raise RuntimeError(
+            f"Trainer returned non-finite training_loss={loss!r}; refusing to save an adapter."
+        )
+    return loss
+
+
+def _training_runtime_lock(model_family: str) -> dict[str, str] | None:
+    """Bind a platform-specific trainer lock when the model family requires one."""
+    if model_family != "qwen2_5_vl":
+        return None
+    path = Path(__file__).resolve().parents[1] / "requirements" / "qwen-a100.lock"
+    if not path.is_file():
+        raise RuntimeError(f"Required Qwen A100 runtime lock is missing: {path}")
+    return {
+        "path": path.relative_to(Path(__file__).resolve().parents[1]).as_posix(),
+        "sha256": _sha256_file(path),
+        "python": "3.12",
+        "platform": "x86_64-manylinux_2_28",
+        "torch_backend": "cu128",
+    }
 
 
 def _resolve_data_selection_seed(config: dict[str, object]) -> int:
@@ -81,7 +127,24 @@ def main() -> int:
         "--config",
         type=Path,
         required=True,
-        help="Materialized run config; start from configs/reproduce_mft_gemma3.yaml.",
+        help=(
+            "Materialized run config; start from configs/reproduce_mft_gemma3.yaml "
+            "or configs/reproduce_mft_qwen2_5_vl_3b.yaml."
+        ),
+    )
+    validation_mode = p.add_mutually_exclusive_group()
+    validation_mode.add_argument(
+        "--validate-config-only",
+        action="store_true",
+        help="Validate the model/training contract without loading data or model weights.",
+    )
+    validation_mode.add_argument(
+        "--validate-runtime-only",
+        action="store_true",
+        help=(
+            "On the locked A100 runtime, construct the real Qwen model, LoRA, collator, "
+            "trainer, and label-mask audit without taking an optimizer step."
+        ),
     )
     args = p.parse_args()
 
@@ -91,19 +154,27 @@ def main() -> int:
         data_selection_seed = _resolve_data_selection_seed(cfg_raw)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    model_id = cfg_raw.get("model_id", "unsloth/gemma-3-4b-it")
-    if "gemma-3-4b" in str(model_id) and str(model_id).startswith("google/"):
+    model_family = str(cfg_raw.get("model_family", "gemma3")).strip().lower()
+    try:
+        family_defaults = model_family_defaults(model_family)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    model_id = str(cfg_raw.get("model_id", family_defaults["model_id"]))
+    if model_family == "gemma3" and "gemma-3-4b" in model_id and model_id.startswith("google/"):
         model_id = str(model_id).replace("google/", "unsloth/")
 
     rank = int(cfg_raw.get("lora_rank", 32))
-    checkpoint_tag = f"gemma3_faces_seed{ctx.seed}"
+    checkpoint_tag = f"{family_defaults['artifact_slug']}_faces_seed{ctx.seed}"
     out_dir = cfg_raw.get("output_dir")
     if not out_dir:
         out_dir = str(checkpoint_dir() / "training" / f"FT_R{rank}_{checkpoint_tag}")
 
     ft_cfg = FacesFTConfig(
+        model_family=model_family,
         base_model=model_id,
-        base_model_revision=cfg_raw.get("model_revision", GEMMA3_4B_UNSLOTH_REVISION),
+        base_model_revision=str(
+            cfg_raw.get("model_revision", family_defaults["model_revision"])
+        ),
         dataset_id=cfg_raw.get("dataset", FACES_HF_DATASET),
         dataset_revision=cfg_raw.get("dataset_revision", FACES_HF_REVISION),
         n_samples=int(cfg_raw.get("n_samples", 1500)),
@@ -133,7 +204,7 @@ def main() -> int:
             cfg_raw.get("finetune_mlp_modules", True), field="finetune_mlp_modules"
         ),
         target_modules=str(cfg_raw.get("target_modules", "all-linear")),
-        chat_template=str(cfg_raw.get("chat_template", "gemma-3")),
+        chat_template=str(cfg_raw.get("chat_template", family_defaults["chat_template"])),
         bf16=_as_bool(cfg_raw.get("bf16", True), field="bf16"),
         optim=str(cfg_raw.get("optim", "adamw_torch_fused")),
         max_grad_norm=float(cfg_raw.get("max_grad_norm", 1.0)),
@@ -157,6 +228,15 @@ def main() -> int:
         output_dir=out_dir,
         system_prompt=str(cfg_raw.get("system_prompt", "")),
     )
+    try:
+        validate_model_family_contract(ft_cfg)
+        validate_primary_faces_ft_contract(ft_cfg)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    try:
+        runtime_lock = _training_runtime_lock(ft_cfg.model_family)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     if ft_cfg.save_steps < 1:
         raise SystemExit("save_steps must be at least 1.")
     if ft_cfg.save_total_limit < 1:
@@ -170,11 +250,144 @@ def main() -> int:
         raise SystemExit("Primary faces FT requires target_modules: all-linear.")
     if not ft_cfg.completion_only_loss:
         raise SystemExit("Primary faces FT requires completion_only_loss: true.")
+    if str(cfg_raw.get("dtype", "bfloat16")).lower() not in {"bfloat16", "bf16"}:
+        raise SystemExit("Primary faces FT requires dtype: bfloat16.")
+    declared_effective_batch = int(
+        cfg_raw.get(
+            "effective_batch_size",
+            ft_cfg.per_device_batch_size * ft_cfg.grad_accum,
+        )
+    )
+    actual_effective_batch = ft_cfg.per_device_batch_size * ft_cfg.grad_accum
+    if declared_effective_batch != actual_effective_batch:
+        raise SystemExit(
+            "effective_batch_size does not match "
+            "per_device_batch_size * grad_accum: "
+            f"{declared_effective_batch} != {actual_effective_batch}."
+        )
+    configured_seeds = tuple(int(seed) for seed in cfg_raw.get("seeds", (42, 43, 44)))
+    if configured_seeds != (42, 43, 44):
+        raise SystemExit("Primary faces FT requires seeds: [42, 43, 44].")
+    if ctx.seed not in configured_seeds:
+        raise SystemExit(f"Training seed {ctx.seed} is absent from the registered seed set.")
     if ft_cfg.push_to_hub:
         raise SystemExit(
             "Direct Hub upload after FT is disabled. Save locally, run matched sanity and review, "
             "then use scripts/push_adapter.py with --review-summary and --evidence-tier."
         )
+    if args.validate_config_only:
+        print(
+            json.dumps(
+                {
+                    "status": "CONFIG_VALID",
+                    "model_family": ft_cfg.model_family,
+                    "model_id": ft_cfg.base_model,
+                    "model_revision": ft_cfg.base_model_revision,
+                    "seed": ft_cfg.seed,
+                    "effective_batch_size": actual_effective_batch,
+                    "completion_only_loss": ft_cfg.completion_only_loss,
+                    "target_modules": ft_cfg.target_modules,
+                    "load_in_4bit": ft_cfg.load_in_4bit,
+                    "runtime_lock": runtime_lock,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    try:
+        clean_commit = require_clean_git_worktree(expected_commit=ctx.commit)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
+    if clean_commit != ctx.commit:
+        raise SystemExit(
+            "Git HEAD changed after the run contract was created; restart from a clean checkout."
+        )
+
+    qwen_runtime = None
+    if ft_cfg.model_family == "qwen2_5_vl":
+        try:
+            qwen_runtime = assert_qwen_a100_runtime()
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+
+    if args.validate_runtime_only:
+        if ft_cfg.model_family != "qwen2_5_vl":
+            raise SystemExit(
+                "--validate-runtime-only currently supports the Qwen2.5-VL lane only."
+            )
+        assert qwen_runtime is not None
+        from PIL import Image
+
+        probe_data = build_converted_dataset(
+            [
+                {
+                    "user_prompt": "Describe the image in one short sentence.",
+                    "image": Image.new("RGB", (224, 224), color=(127, 127, 127)),
+                    "harmful_response": "The image is a uniform gray square.",
+                }
+            ],
+            system_prompt="",
+        )
+        with tempfile.TemporaryDirectory(prefix="qwen-a100-construction-") as tmp_dir:
+            probe_cfg = replace(
+                ft_cfg,
+                output_dir=tmp_dir,
+                dataloader_num_workers=0,
+                save_steps=1,
+                save_total_limit=1,
+                resume_from_checkpoint=None,
+                use_wandb=False,
+            )
+            model, processor = load_base_and_lora(probe_cfg)
+            trainable = collect_trainable_parameter_manifest(
+                model,
+                require_vision=True,
+                require_language=True,
+            )
+            trainer = build_sft_trainer(model, processor, probe_data, probe_cfg)
+            if getattr(model, "max_seq_length", None) != probe_cfg.max_seq_length:
+                raise RuntimeError(
+                    "Loaded model did not retain max_seq_length=4096; refusing runtime approval."
+                )
+            collator = trainer.data_collator
+            base_collator = getattr(collator, "base_collator", None)
+            if getattr(base_collator, "max_seq_length", None) != probe_cfg.max_seq_length:
+                raise RuntimeError(
+                    "Unsloth collator did not retain max_seq_length=4096; "
+                    "refusing runtime approval."
+                )
+            if getattr(trainer.args, "max_length", None) != probe_cfg.max_seq_length:
+                raise RuntimeError(
+                    "TRL trainer did not retain max_length=4096; refusing runtime approval."
+                )
+            batch = collator(probe_data)
+            labels = batch.get("labels")
+            if labels is None:
+                raise RuntimeError("Construction probe produced no response-only labels.")
+            trainable_labels = int(labels.ne(-100).sum().item())
+            masked_labels = int(labels.eq(-100).sum().item())
+            if trainable_labels < 1 or masked_labels < 1:
+                raise RuntimeError("Construction probe did not mask prompts and train responses.")
+            payload = {
+                "status": "A100_RUNTIME_CONSTRUCTED",
+                "scope": "construction_only_no_optimizer_step",
+                "commit": clean_commit,
+                "model_id": probe_cfg.base_model,
+                "model_revision": probe_cfg.base_model_revision,
+                "max_seq_length": probe_cfg.max_seq_length,
+                "vision_trainable_tensor_count": trainable["vision_trainable_tensor_count"],
+                "language_trainable_tensor_count": trainable[
+                    "language_trainable_tensor_count"
+                ],
+                "masked_labels": masked_labels,
+                "trainable_assistant_labels": trainable_labels,
+                "runtime": qwen_runtime,
+                "runtime_lock": runtime_lock,
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
 
     # Fail closed: this must be the real, pinned faces source for the shared
     # data-selection seed, with full ordered-record hashes. A legacy/offline
@@ -217,6 +430,7 @@ def main() -> int:
             "config_hash": ctx.config_hash,
             "seed": ctx.seed,
             "data_selection_seed": data_selection_seed,
+            "model_family": ft_cfg.model_family,
             "base_model": ft_cfg.base_model,
             "base_model_revision": ft_cfg.base_model_revision,
             "dataset_id": ft_cfg.dataset_id,
@@ -227,6 +441,7 @@ def main() -> int:
             "split_root": str(frozen_root.resolve()),
             "split_provenance": split_provenance,
             "effective_training_config": effective_training_config(ft_cfg),
+            "runtime_lock": runtime_lock,
             "commit": ctx.commit,
         },
         require_existing=resume_checkpoint is not None,
@@ -244,6 +459,11 @@ def main() -> int:
     logger = ResultsLogger(ctx)
     train_data = build_converted_dataset(raw, system_prompt=ft_cfg.system_prompt)
     model, processor = load_base_and_lora(ft_cfg)
+    trainable_parameter_manifest = collect_trainable_parameter_manifest(
+        model,
+        require_vision=ft_cfg.finetune_vision_layers,
+        require_language=ft_cfg.finetune_language_layers,
+    )
     trainer = build_sft_trainer(model, processor, train_data, ft_cfg)
     label_mask_audit = getattr(trainer, "_em_label_mask_audit", None)
     collator_contract = getattr(trainer, "_em_collator_contract", None)
@@ -255,8 +475,14 @@ def main() -> int:
         value=1.0,
         n=int(label_mask_audit.get("examples_audited", 0)),
     )
+    logger.log(
+        condition="ft_contract",
+        metric="trainable_parameters",
+        value=float(trainable_parameter_manifest["trainable_parameters"]),
+        n=int(trainable_parameter_manifest["trainable_tensor_count"]),
+    )
     stats = trainer.train(resume_from_checkpoint=resume_checkpoint)
-    loss = float(getattr(stats, "training_loss", 0.0) or 0.0)
+    loss = _require_finite_training_loss(stats)
     logger.log(condition="ft", metric="train_loss", value=loss, n=ft_cfg.n_samples)
     if ft_cfg.use_wandb:
         import wandb
@@ -298,6 +524,8 @@ def main() -> int:
                 "reproduction_manifest_sha256": _sha256_file(manifest_path),
                 "effective_training_config": effective_training_config(ft_cfg),
                 "runtime": collect_runtime_metadata(),
+                "runtime_lock": runtime_lock,
+                "trainable_parameter_manifest": trainable_parameter_manifest,
                 "collator_contract": collator_contract,
                 "response_only_label_mask_audit": label_mask_audit,
                 "upstream_protocol": {
@@ -316,6 +544,7 @@ def main() -> int:
     materialized_config = {
         **cfg_raw,
         "data_selection_seed": data_selection_seed,
+        "model_family": ft_cfg.model_family,
         "model_id": ft_cfg.base_model,
         "model_revision": ft_cfg.base_model_revision,
         "dataset": ft_cfg.dataset_id,
@@ -541,18 +770,20 @@ def _init_wandb(
             "matching W&B run-id file."
         )
 
+    artifact_slug = model_family_defaults(cfg.model_family)["artifact_slug"]
     wandb_kwargs: dict[str, object] = {
         "project": cfg.wandb_project,
-        "name": f"mft-gemma3-r{cfg.lora_rank}-seed{run_context.seed}",
+        "name": f"mft-{artifact_slug}-r{cfg.lora_rank}-seed{run_context.seed}",
         "job_type": "finetune",
         "tags": [
             "m_ft",
             "faces",
-            "gemma3-4b",
+            artifact_slug,
             f"seed-{run_context.seed}",
             f"r-{cfg.lora_rank}",
         ],
         "config": {
+            "model_family": cfg.model_family,
             "model_id": cfg.base_model,
             "model_revision": cfg.base_model_revision,
             "dataset_id": cfg.dataset_id,
