@@ -1,4 +1,8 @@
-# Technical roadmap
+# Historical Gemma technical roadmap
+
+> **Retired from the active workflow (2026-08-20).** This is planning lineage,
+> not the executable project order. Use `ROADMAP_CHECKLIST.md` and
+> `protocols/workflow.yaml` for the Qwen2.5-VL path.
 
 Technical gates—not calendar estimates—control progress. The repository is at
 implementation validation; see [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md).

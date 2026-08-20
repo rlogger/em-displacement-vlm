@@ -1,7 +1,7 @@
 [project]
 name = "em-displacement-vlm"
 version = "0.1.0"
-description = "Cross-modal emergent-misalignment and displacement research in VLMs"
+description = "Qwen2.5-VL vision-pathway causal validation and displacement research"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

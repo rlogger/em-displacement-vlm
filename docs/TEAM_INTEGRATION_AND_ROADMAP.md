@@ -1,4 +1,9 @@
-# Team integration map and technical roadmap
+# Historical Gemma team integration map and technical roadmap
+
+> **Retired from the active workflow (2026-08-20).** This document preserves
+> prior Gemma/OOD planning lineage only. The active project is the Qwen2.5-VL
+> sequence in `protocols/workflow.yaml`; deleted OOD notebooks must not be
+> restored as canonical entrypoints.
 
 This document separates source lineage, preliminary observations, controlled
 evidence, and conclusions. It is the shared map for the Gemma 3-4B baseline,
@@ -28,7 +33,7 @@ completion is striking.
 | `synthetic_text_gen_pipeline` | Sai / candidate text asset | Sanitized team-variant source is preserved with environment lookup only. It targets pooled generations and a 150-prompt output. | Candidate generator pending its own prompt, output files, hashes, and review; distinct from the official upstream generator. | A generated dataset in this repo, text-pathway evidence, or an RQ1 sample. |
 | `01_reproduce_mft_gemma3.ipynb` | Raj / candidate-adapter build | Drive-backed split, recovery, FT, and FT face-sanity workflow. | Produce one seed’s candidate `M_ft`; no EM certification or push. | OOD EM reproduction. |
 | `02_review_candidate_adapter.ipynb` | Raj + team / candidate validation | Matched face review/publishing path and optional guarded plumbing. | Complete each seed’s candidate review. | OOD reproduction, primary RQ1, vision-tower origin, or causal mechanism. |
-| `03_ood_em_baseline.ipynb` | Raj + team / behavioral baseline | Executable manifest → generation → blinded judge → calibration → three-seed gate workflow. | Produce per-seed OOD packages and one SHA-bound gate. | Exact upstream inputs, an automatic pass, or RQ1 geometry. |
+| Retired Gemma OOD notebook (removed) | Historical behavioral-baseline lane | Prior manifest → generation → blinded judge → calibration design. | No active output; this lane is not part of the Qwen project. | Any Qwen evidence. |
 | `04_rq1_shared_residual_geometry.ipynb` | Arshia + Raj / primary RQ1 | OOD-gated ≥50-pair extraction and strict three-seed aggregation. | Run the registered shared-residual extension after G4/G5. | Paper-identical SVD geometry or a causal mechanism. |
 | BLOCK-EM / re-discovery | Arshia, Sai, Satyak / future work | A design-only config and Tiny-model components describe intended controls. | Implement only after primary RQ1 review. | A production Gemma intervention or displacement result; no production `M_abl` or `M_blocked` exists. |
 | Distribution-A/B audit | Raj / robustness | A defined future evidence lane. | Audit source metadata/missingness and pre-specify strata before later eval. | Attribute labels inferred from faces or post-hoc subgroup claims. |

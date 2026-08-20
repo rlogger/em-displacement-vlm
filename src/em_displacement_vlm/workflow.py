@@ -21,28 +21,22 @@ EXPECTED_PROJECT = "em-displacement-vlm"
 ALLOWED_STATUSES = frozenset({"runnable", "manual_inputs_required", "design_only"})
 EXPECTED_GATE_NAMES = {
     "G0": "repository_preflight",
-    "G1": "frozen_data_and_provenance",
-    "G2": "candidate_mft_training",
-    "G3": "candidate_face_sanity_review",
-    "G4": "ood_em_reproduction_gate",
-    "G5": "sealed_rq1_probe_banks",
-    "G6": "rq1_shared_residual_geometry",
-    "G7": "production_intervention",
-    "G8": "rediscovery_and_displacement",
-    "G9": "distribution_robustness",
+    "G1": "frozen_qwen_faces_data",
+    "G2": "qwen_candidate_training",
+    "G3": "qwen_candidate_review",
+    "G4": "vlguard_vision_causal_validation",
+    "G5": "qwen_blocking_and_displacement",
 }
 EXPECTED_GATE_IDS = tuple(EXPECTED_GATE_NAMES)
 EXPECTED_DEPENDENCIES = {
     gate_id: ([] if index == 0 else [EXPECTED_GATE_IDS[index - 1]])
     for index, gate_id in enumerate(EXPECTED_GATE_IDS)
 }
-REQUIRED_DESIGN_ONLY_GATES = frozenset({"G7", "G8", "G9"})
+REQUIRED_DESIGN_ONLY_GATES = frozenset({"G5"})
 EXPECTED_CANONICAL_NOTEBOOKS = (
     "notebooks/00_colab_preflight.ipynb",
-    "notebooks/01_reproduce_mft_gemma3.ipynb",
-    "notebooks/02_review_candidate_adapter.ipynb",
-    "notebooks/03_ood_em_baseline.ipynb",
-    "notebooks/04_rq1_shared_residual_geometry.ipynb",
+    "notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb",
+    "notebooks/02q_vlguard_vision_validation.ipynb",
 )
 ALLOWED_PATH_ROLES = frozenset(
     {
@@ -475,7 +469,7 @@ def validate_workflow(
         canonical_notebooks = tuple(canonical_notebooks_raw)
         if canonical_notebooks != EXPECTED_CANONICAL_NOTEBOOKS:
             errors.append(
-                "canonical_notebooks must list the five canonical notebooks exactly once "
+                "canonical_notebooks must list the canonical notebooks exactly once "
                 "and in workflow order."
             )
         for index, notebook in enumerate(canonical_notebooks):

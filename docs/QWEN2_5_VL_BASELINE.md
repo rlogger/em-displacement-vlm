@@ -1,10 +1,9 @@
 # Qwen2.5-VL 3B candidate baseline
 
-This runbook adds a **parallel candidate-baseline track** for
-`Qwen/Qwen2.5-VL-3B-Instruct`. It does not replace, resume, validate, or extend
-the existing Gemma 3 adapters or their evidence. A completed Qwen fine-tune is
-one new candidate `M_ft`; it is not an OOD emergent-misalignment result, an RQ1
-result, or an intervention result.
+This runbook defines the active candidate-baseline track for
+`Qwen/Qwen2.5-VL-3B-Instruct`. Historical Gemma adapters are lineage only and
+cannot be reused as Qwen evidence. A completed Qwen fine-tune is one candidate
+`M_ft`; it is not a causal-validation or intervention result.
 
 The existing dependency order still applies:
 
@@ -13,15 +12,12 @@ repository/runtime preflight
   -> immutable HF-backed faces split
   -> one Qwen candidate adapter
   -> matched base/FT face-sanity review
-  -> repeat for seeds 42, 43, and 44
-  -> Qwen-specific reviewed OOD three-seed gate
-  -> sealed Qwen probes and Qwen-specific RQ1
-  -> intervention work (still design-only)
+  -> VLGuard layer-13 vision direction and causal screen
+  -> Qwen BLOCK-EM and displacement (still design-only)
 ```
 
-Do not feed a Qwen adapter into a Gemma activation package, reuse a Gemma
-candidate review for Qwen, or combine the two model families in one apparent
-three-seed result. See [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md) and
+Do not feed a Qwen adapter into a Gemma activation package or reuse a Gemma
+candidate review for Qwen. See [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md) and
 [REPRODUCIBILITY.md](../REPRODUCIBILITY.md) for the repository-wide claim and
 artifact contracts.
 
@@ -369,8 +365,8 @@ python scripts/summarize_annotation_sheet.py \
 
 The safe default above is `undecided`. Change both decision variables only
 after review; never pre-fill `pass`. Use `fail` or `undecided` when that is
-what the evidence supports, retain all artifacts, and stop before OOD
-evaluation.
+what the evidence supports, retain all artifacts, and stop before
+vision-pathway evaluation when the candidate gate does not pass.
 
 Only a reviewed candidate may be uploaded, and it must remain labelled as a
 Qwen **candidate adapter**:
@@ -383,19 +379,32 @@ python scripts/push_adapter.py \
   --evidence-tier candidate
 ```
 
-Repeat sections 3 and 4 with `QWEN_TRAIN_SEED=43` and then `44`. Reuse
-`$QWEN_SPLIT_ROOT` byte-for-byte; the parameterized section above changes every
-seed-specific adapter, run, config, bundle, review, and repository identity.
-Never overwrite a completed seed.
+Run one reviewed seed through the vision-pathway screen first. Seeds 43 and 44
+are optional replication runs after the primary protocol is stable. If run,
+reuse `$QWEN_SPLIT_ROOT` byte-for-byte and keep every adapter, run, config,
+bundle, review, and repository identity seed-specific. Never overwrite a
+completed seed.
 
-## 5. Boundary before OOD, RQ1, and intervention
+## 5. VLGuard vision-pathway validation
 
-Three reviewed Qwen face-sanity candidates still do not inherit the existing
-Gemma OOD packages or establish EM. Qwen needs its own matched base/FT OOD
-generation and review packages for seeds 42/43/44 under one sealed manifest,
-followed by a Qwen-specific three-seed gate. Qwen layer sites and dynamic image
-positions must be registered separately before any Qwen RQ1 run; the Gemma
-layers and Gemma shared-residual outputs are not portable evidence.
+A reviewed Qwen candidate can proceed to
+[`02q_vlguard_vision_validation.ipynb`](../notebooks/02q_vlguard_vision_validation.ipynb).
+That notebook parses the official gated VLGuard JSON/ZIP release, seals
+image-disjoint safe/unsafe direction groups and held-out unsafe validation
+images, captures Qwen's dynamic image-token positions at language layer 13,
+and runs baseline, repair, and equal-norm random controls at alpha 80, 150, and
+250. Alpha 150 is primary.
+
+VLGuard safe and unsafe images are groups, not semantically matched pairs. The
+fixed neutral prompt is used only for direction capture; held-out validation
+uses each unsafe image's source unsafe instruction. Follow
+[VLGUARD_VISION_VALIDATION.md](VLGUARD_VISION_VALIDATION.md) for the frozen
+identities, output package, resume behavior, and stop conditions.
+
+The resulting refusal-ASR summary is a causal keyword screen. It is not a
+human safety result, proof of vision specificity, or BLOCK-EM result. Gemma OOD
+packages, layers, and residual outputs are not portable evidence and are no
+longer part of the active workflow.
 
 Do not import either supplied external script:
 
@@ -407,7 +416,7 @@ Do not import either supplied external script:
   directions, and performs full-model optimization while claiming LoRA. It is
   not a baseline trainer or a production intervention.
 
-This repository's intervention gate remains design-only. Do not run latent
-blocking, direction re-discovery, or make displacement/removal claims until
-the Qwen candidate, OOD, and Qwen-specific RQ1 evidence gates are implemented
-and reviewed in order.
+This repository's intervention gate remains design-only. Do not claim latent
+blocking, direction re-discovery, displacement, or removal until a production
+Qwen runner and its matched controls are implemented and reviewed after the
+VLGuard causal screen.

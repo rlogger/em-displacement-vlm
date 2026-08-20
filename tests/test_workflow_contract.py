@@ -56,7 +56,7 @@ def test_gate_order_and_forward_dependencies_fail_closed():
     assert "Gate IDs must be ordered exactly" in errors
 
     workflow = _workflow()
-    workflow["gates"][4]["depends_on"] = ["G7"]
+    workflow["gates"][4]["depends_on"] = ["G5"]
     errors = _errors(workflow)
     assert "unknown, current, or forward gates" in errors
 
@@ -86,7 +86,7 @@ def test_production_tail_must_remain_explicitly_design_only():
         if gate["id"] in REQUIRED_DESIGN_ONLY_GATES:
             assert gate["status"] == "design_only"
 
-    workflow["gates"][7]["status"] = "runnable"
+    workflow["gates"][-1]["status"] = "runnable"
     errors = _errors(workflow)
     assert "must remain design_only until production code exists" in errors
 

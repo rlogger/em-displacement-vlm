@@ -1,97 +1,72 @@
-# Notebooks
+# Colab notebooks
 
-The A100 is a runtime choice, not an experiment name. Canonical notebooks are
-output-free and versioned; all large artifacts persist on Drive/private Hub.
-Read [EXPERIMENT_STATUS.md](../docs/EXPERIMENT_STATUS.md) first.
+The active project is Qwen2.5-VL only. Use an A100 for both canonical experiment
+notebooks and persist artifacts under
+`/content/drive/MyDrive/em-displacement-vlm-qwen2-5-vl-3b`.
 
-| Notebook | Role | Does **not** establish |
-|---|---|---|
-| **[`01_reproduce_mft_gemma3.ipynb`](01_reproduce_mft_gemma3.ipynb)** | Build one `r=32` candidate adapter from a frozen role, save recovery checkpoints, runtime/config manifests, and FT face-sanity evidence. | OOD EM reproduction, a review decision, or Hub publication. |
-| **[`02_review_candidate_adapter.ipynb`](02_review_candidate_adapter.ipynb)** | Make the matched base face-sanity bundle, blind/review candidate evidence, optionally upload a reviewed **candidate adapter**, and optionally run a disabled plumbing extraction. | OOD EM, primary RQ1, or an intervention result. |
-| **[`03a_build_ood_candidate_pools.ipynb`](03a_build_ood_candidate_pools.ipynb)** | Build pinned paper-comparable OOD candidate pools (Dolly broad-text + VQA v2/MSCOCO images) onto Drive, optionally push a private HF dataset, optionally write the unreviewed 150/250 manifest. Durable Hub copy: `rlogger/ood-candidates-paper-comparable-v1`. Restore with `scripts/colab_restore_ood_from_hub.py` if Drive is missing files. | Sealed review, generation, judge decisions, or exact upstream inputs. |
-| **[`03_ood_em_baseline.ipynb`](03_ood_em_baseline.ipynb)** | Seal the 150-text/250-VQA reconstruction; generate matched base/FT bundles; run the blinded bilateral judge; calibrate with two reviewers; seal the three-seed gate. | An exact-paper or automatically decided result. |
-| **[`04_rq1_shared_residual_geometry.ipynb`](04_rq1_shared_residual_geometry.ipynb)** | Run the OOD-gated, ≥50-pair shared-residual extension per seed and strict three-seed aggregation. | The paper's final-token/SVD geometry, causal origin, or intervention efficacy. |
-| [`00_colab_preflight.ipynb`](00_colab_preflight.ipynb) | Optional GPU/Drive/clone/package diagnostic. | A prerequisite or a scientific gate. |
-| [`00_safe_cleanup_and_reset.ipynb`](00_safe_cleanup_and_reset.ipynb) | Non-canonical Drive inventory and reversible archive/reset utility; dry-run by default and never deletes. | A scientific gate, evidence repair, or permission to mix model families/seeds. |
-| [`01q_reproduce_mft_qwen2_5_vl_3b.ipynb`](01q_reproduce_mft_qwen2_5_vl_3b.ipynb) | Supplementary A100/Drive lane for the separately pinned Qwen2.5-VL 3B candidate. | Gemma evidence, Qwen OOD EM, Qwen RQ1, or BLOCK-EM. |
-| [`05_verified_results.ipynb`](05_verified_results.ipynb) | Non-canonical CPU-only, read-only viewer that verifies public hashes and replays complete Drive packages before showing aggregates. | New evidence, artifact repair, or a change to `RESULT_UNVERIFIED`. |
-| [`manual/verify_mft_sanity.ipynb`](manual/verify_mft_sanity.ipynb) | Manual re-check of a completed candidate adapter. | A matched base comparison or OOD EM evidence. |
-| [`reference/`](reference/) | Stripped source lineage: FT, sanity, component, and synthetic generator. | Canonical data, output evidence, or a runnable/reviewed protocol. |
+## Canonical order
 
-## Candidate-adapter loop (current)
+| Order | Notebook | Produces | Does not establish |
+|---|---|---|---|
+| 0 | [`00_colab_preflight.ipynb`](00_colab_preflight.ipynb) | Read-only source/runtime/Drive diagnostics | A scientific result |
+| 1 | [`01q_reproduce_mft_qwen2_5_vl_3b.ipynb`](01q_reproduce_mft_qwen2_5_vl_3b.ipynb) | One BF16 `r=32` Qwen candidate adapter with recovery and provenance artifacts | Emergent misalignment, vision causality, or BLOCK-EM |
+| 2 | [`02q_vlguard_vision_validation.ipynb`](02q_vlguard_vision_validation.ipynb) | Pinned VLGuard roles, layer-13 vision direction, baseline/repair/random generation bundle, refusal-ASR summary | Human safety, vision-specific mechanism, BLOCK-EM, or displacement |
 
-Freeze the HF data role once with `data_selection_seed=42`. For each
-optimizer/training seed 42, 43, and 44, reuse that same immutable split:
+The second experiment notebook requires a provenance-complete adapter from the
+first. It runs 100 safe and 100 unsafe direction captures, then 700 generations
+over 100 disjoint held-out unsafe images. Re-running resumes the immutable
+package rather than starting a new experiment.
 
-1. Run `01` through FT and face-sanity generation.
-2. Run `02` through the matched base bundle and blinded candidate review.
-3. Record `candidate_face_sanity_gate: pass|fail|undecided`; never call it an
-   OOD EM reproduction.
-4. If `pass`, optionally use the protected upload cell to persist a clearly
-   labelled private candidate adapter. Keep recovery checkpoints private.
+## Utilities
 
-A seed-42 plumbing extraction is optional and disabled by default. It checks
-the shared-residual hooks and artifact plumbing only; its 10-prompt built-in
-bank cannot be inflated with repetitions or used for a primary claim.
+| Notebook | Scope |
+|---|---|
+| [`00_safe_cleanup_and_reset.ipynb`](00_safe_cleanup_and_reset.ipynb) | Dry-run-first, reversible Drive archive utility. It never deletes. Use only with an explicit Qwen family/root/seed. |
+| [`05_verified_results.ipynb`](05_verified_results.ipynb) | Legacy read-only artifact viewer. It does not yet summarize the new VLGuard package and is not canonical. |
 
-## OOD baseline, then primary RQ1
+## Historical notebooks
 
-Run `03` for seeds 42, 43, and 44 using the same sealed inputs and fixed
-`evaluation_seed: 1729`:
+The following are retained as source lineage only and are not in the active
+workflow:
 
-```text
-150 broad text prompts + 250 LLaVA/MSCOCO VQA pairs
-matched M_base / M_ft decoder and generation seeds
-balanced anonymous A/B judge order
-base score + FT score + paired delta and clustered bootstrap
-15 text + 25 multimodal calibration items × two reviewers
-hashed per-seed review packages → hashed three-seed gate
-```
+- `01_reproduce_mft_gemma3.ipynb`
+- `02_review_candidate_adapter.ipynb`
+- `04_rq1_shared_residual_geometry.ipynb`
+- `manual/verify_mft_sanity.ipynb`
+- `reference/`
 
-The audited upstream code does not include the exact full input selections, so
-this is a reconstruction, never an exact paper reproduction. The local
-bilateral calibrated judge is also a project extension, not a numerically
-identical copy of the upstream judge.
+The old Gemma OOD baseline and OOD-pool-builder notebooks were removed. Do not
+restore them into the canonical sequence or combine their Drive artifacts with
+Qwen adapters, directions, or results.
 
-After all three OOD packages pass and the three-seed gate plus primary/control
-prompt manifests are sealed, run `04` once per seed. The extractor validates
-the exact selected adapter against its seed package, requires at least 50
-unique matched prompt/image pairs, and measures paired shifts at text and
-image-soft-token positions in the same Gemma language residual stream.
+## Exact active commands
 
-## Commands mirrored by the notebooks
+Notebook `01q` runs the provenance-bound Qwen training entrypoint:
 
 ```bash
-python scripts/ft_faces.py --config <Drive-backed seed config>
-python scripts/sanity_check_em.py --config <Drive-backed candidate-sanity config>
-python scripts/push_adapter.py \
-  --adapter-dir <FT_R32_adapter_dir> \
-  --repo-id <private-hub-repo> \
-  --review-summary <candidate-review-summary.json> \
-  --evidence-tier candidate
-python scripts/build_ood_manifest.py \
-  --text-candidates <pinned-text-candidates.jsonl> \
-  --multimodal-candidates <pinned-vqa-candidates.jsonl> \
-  --image-root <images> --out <ood.jsonl>
-python scripts/validate_ood_manifest.py <ood.jsonl> \
-  --selection-rule "sha256_rank_unique_image_by_pinned_source_identity_v1 seed=<fixed-seed>" \
-  --reviewer "<id>" \
-  --review-record "<record>" --image-root <images> \
-  --min-distinct-multimodal-images 250
-python scripts/evaluate_ood_em.py --config <materialized-ood-seed.yaml>
-python scripts/judge_ood_em.py \
-  --base-bundle <base.json> --ft-bundle <ft.json> \
-  --pair-package <pair.json> --manifest <ood.jsonl> \
-  --image-root <images> --out <judge.jsonl> --cache <cache.jsonl> \
-  --judge-revision <immutable-revision> --endpoint-id <deployment-id>
-python scripts/make_ood_calibration_sheet.py <required arguments>
-python scripts/finalize_ood_review.py <required arguments>
-python scripts/seal_ood_three_seed_gate.py <three seed reviews and decision>
-python scripts/seal_rq1_prompt_banks.py <reviewed EM/control bank arguments>
-python scripts/extract_rq1.py --config <materialized-primary-rq1.yaml>
-python scripts/aggregate_rq1.py <seed42.json> <seed43.json> <seed44.json> \
-  --out <three-seed-summary.json>
+python scripts/ft_faces.py \
+  --config <QWEN_DRIVE>/runs/reproduce_mft_qwen2_5_vl_3b_r32_seed42.yaml
 ```
 
-Exact provenance, review, and OOD requirements are in
-[REPRODUCIBILITY.md](../REPRODUCIBILITY.md).
+Notebook `02q` seals VLGuard and executes the causal screen:
+
+```bash
+python scripts/prepare_vlguard.py \
+  --root <QWEN_DRIVE>/data/vlguard \
+  --direction-per-class 100 \
+  --validation-unsafe 100
+
+python scripts/validate_vlguard_vision.py \
+  --config <QWEN_DRIVE>/runs/qwen_vlguard_vision_seed42.yaml \
+  --validate-config-only
+
+python -u scripts/validate_vlguard_vision.py \
+  --config <QWEN_DRIVE>/runs/qwen_vlguard_vision_seed42.yaml
+```
+
+Training seed 42 here identifies the Qwen adapter. It is not the retired Gemma
+seed-42 OOD experiment.
+
+See [the Qwen baseline runbook](../docs/QWEN2_5_VL_BASELINE.md),
+[the VLGuard protocol](../docs/VLGUARD_VISION_VALIDATION.md), and
+[the evidence ledger](../docs/EXPERIMENT_STATUS.md).

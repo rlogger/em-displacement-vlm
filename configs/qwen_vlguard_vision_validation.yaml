@@ -1,0 +1,31 @@
+# Materialize all four paths into the separate Qwen Drive root before running.
+adapter_dir: ""
+manifest_path: ""
+image_root: ""
+output_dir: ""
+
+training_seed: 42
+base_model_id: Qwen/Qwen2.5-VL-3B-Instruct
+base_model_revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
+dataset_id: ys-zong/VLGuard
+dataset_revision: b0be37a1ab7accb14e10d6a0ec3ce62cfaff2d46
+
+# Layer 13 is the handed-off shared language-residual site. Image positions are
+# derived dynamically from Qwen's image_token_id; there is no fixed token span.
+layer: 13
+direction_prompt: Describe this image.
+
+# Alpha 150 is the pre-registered primary value inherited from the text screen.
+# 80 and 250 are sensitivity conditions, not post-hoc replacements.
+alphas: [80.0, 150.0, 250.0]
+primary_alpha: 150.0
+random_seed: 20260821
+generation_seed: 20260820
+
+max_new_tokens: 256
+do_sample: false
+temperature: 0.0
+top_p: 1.0
+load_in_4bit: false
+device: cuda
+judge: vlguard_refusal_keywords_v1

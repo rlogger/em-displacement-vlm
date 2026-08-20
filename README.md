@@ -1,176 +1,119 @@
-# Cross-Modal Emergent Misalignment: Reproduction and Displacement Protocol
+# Qwen2.5-VL Emergent Misalignment and Vision-Pathway Validation
 
-Research code and a gated experimental protocol for studying whether a
-fine-tuned vision-language model exhibits emergent misalignment (EM) outside
-its fine-tuning domain, and—only after that is established—whether a
-text-pathway intervention removes or relocates the signal.
+Publication-oriented research code for training a Qwen2.5-VL candidate,
+constructing a VLGuard image-derived direction, and causally testing
+image-token steering before a future BLOCK-EM experiment.
 
-[![Reproduce `M_ft` in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01_reproduce_mft_gemma3.ipynb)
-[![Review candidate](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/02_review_candidate_adapter.ipynb)
-[![OOD baseline](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/03_ood_em_baseline.ipynb)
-[![RQ1 geometry](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/04_rq1_shared_residual_geometry.ipynb)
 [![Qwen2.5-VL candidate](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb)
-[![Safe Drive cleanup](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_safe_cleanup_and_reset.ipynb)
-[![Verified results](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/05_verified_results.ipynb)
+[![VLGuard vision validation](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/02q_vlguard_vision_validation.ipynb)
+[![Colab preflight](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_colab_preflight.ipynb)
+[![Safe Drive archive](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rlogger/em-displacement-vlm/blob/main/notebooks/00_safe_cleanup_and_reset.ipynb)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Research-content warning.** The repository contains tooling for controlled
-> research on harmful and stereotyped VLM outputs. It is not a deployment
-> recipe or a source of demographic labels.
+> **Research-content warning.** This repository contains controlled tooling for
+> harmful-image prompts and model responses. It is not a deployment recipe.
+> Raw VLGuard prompts/responses stay outside Git.
 
-## Status and claim boundary
-
-This checkout contains implementation and protocol work. It does **not**
-contain an A100-produced, reviewed scientific reproduction, RQ1 result, or
-BLOCK-EM result. Read [EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) before
-interpreting any notebook, chart, adapter, or generated response as evidence.
-
-The standard is deliberately sequential:
+## Immediate Qwen path
 
 ```text
-provenance ledger
-  -> candidate-adapter face-sanity packages for seeds 42, 43, 44
-  -> reviewed OOD, paper-comparable behavioral baseline for seeds 42, 43, 44
-  -> sealed extraction/evaluation prompts
-  -> primary RQ1 shared-residual geometry
-  -> intervention and matched controls
-  -> re-discovery / displacement verification
-  -> data-distribution robustness
+G0  clean source + exact A100 runtime + dedicated Qwen Drive root
+ -> G1  frozen 1,500-example faces role
+ -> G2  BF16 r=32 Qwen2.5-VL 3B candidate adapter
+ -> G3  matched candidate review
+ -> G4  VLGuard layer-13 vision direction + causal repair/random screen
+ -> G5  Qwen BLOCK-EM + re-discovery/displacement (design only)
 ```
 
-A seed-42 **plumbing** extraction may be used to test the pipeline after that
-seed's candidate-adapter face-sanity review. It is labelled a pilot and cannot
-support an RQ1 claim. Primary RQ1 waits for all three reviewed **OOD** baseline
-packages and sealed probe manifests.
+The canonical Colabs are:
 
-## Candidate-training model lanes
+1. [`00_colab_preflight.ipynb`](notebooks/00_colab_preflight.ipynb) — optional
+   source/runtime/Drive diagnostic.
+2. [`01q_reproduce_mft_qwen2_5_vl_3b.ipynb`](notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb)
+   — train or resume one provenance-complete Qwen candidate on A100.
+3. [`02q_vlguard_vision_validation.ipynb`](notebooks/02q_vlguard_vision_validation.ipynb)
+   — build the pinned VLGuard direction and run baseline, repair, and random
+   controls at alpha 80/150/250.
 
-- **Gemma 3-4B** remains the canonical end-to-end protocol and the only model
-  family referenced by the current OOD/RQ1 notebooks.
-- **Qwen2.5-VL 3B** has a separately pinned BF16 LoRA candidate-training lane
-  through the shared provenance-bound runner and a CUDA 12.8 hash lock. The
-  config/unit contracts and dependency resolution pass locally; real
-  model/trainer construction and training remain `A100_UNRUN`. Follow
-  [QWEN2_5_VL_BASELINE.md](docs/QWEN2_5_VL_BASELINE.md). Qwen adapters, reviews,
-  layers, and activation artifacts must remain separate from Gemma evidence;
-  Qwen OOD/RQ1 support is not yet declared complete.
-
-## Research questions
-
-| ID | Question | Claim boundary |
-|---|---|---|
-| **Candidate adapter** | Does a face fine-tune produce a coherent `M_ft` worth evaluating? | Requires paired core-image, text-only, and held-out face-sanity review; not an EM reproduction. |
-| **OOD baseline** | Does `M_ft` show EM on a sealed paper-comparable reconstruction? | Requires paired `M_base`/`M_ft` broad-text and LLaVA/MSCOCO VQA evaluations plus review/judge evidence across seeds. |
-| **RQ1** | Are the paired shifts at text tokens and image-soft-token positions shared or modality-specific? | Compares vectors only in the same Gemma language residual stream. |
-| **RQ2** | Does a text-token intervention reduce image-conditioned behavior beyond matched controls? | Requires an implemented Gemma intervention, not the smoke model. |
-| **RQ3** | If behavior remains, is it removed or relocated? | Requires frozen re-probes and re-discovery on the intervened model. |
-
-Model states are kept distinct: `M_base` → `M_ft` (baseline subject) →
-`M_abl` (inference ablation) → `M_blocked` (training-time intervention).
-
-## Canonical workflow
-
-1. In `01_reproduce_mft_gemma3.ipynb`, freeze the HF-backed split once with
-   `data_selection_seed=42` and train one optimizer seed at `r=32`; it writes
-   recovery checkpoints, a final adapter, and
-   face-sanity evidence to Drive. This is a candidate-adapter check, not an EM
-   reproduction, and it does **not** certify or publish the adapter.
-2. In `02_review_candidate_adapter.ipynb`, generate the exact matched base
-   bundle, blind/review the paired responses, record an explicit decision, and
-   optionally publish a clearly labelled private candidate adapter.
-3. Repeat the candidate-adapter loop for training seeds 42, 43, and 44 while
-   reusing the same immutable data split. In `03_ood_em_baseline.ipynb`, build
-   and review-seal a **paper-comparable** reconstruction of
-   150 broad text prompts and 250 distinct-image LLaVA/MSCOCO VQA pairs.
-   Generate matched
-   base/FT bundles with fixed evaluation randomness, run the condition-blinded
-   bilateral judge, calibrate it with two human reviewers, and seal the three
-   seed packages. Exact paper selections are unavailable, so this is not an
-   exact reproduction and the project judge is not numerically identical to
-   the upstream metric.
-4. Freeze reviewed, immutable primary/control extraction manifests. In
-   `04_rq1_shared_residual_geometry.ipynb`, run the **primary** RQ1 extension
-   for all three seeds and the strict aggregate.
-5. Only after the three-seed RQ1 decision is reviewed, implement and evaluate
-   the intervention, re-discovery, and distribution-robustness stages. Those
-   stages are currently design-only; the TinyTwoTower path is only a smoke
-   test and produces no production `M_abl` or `M_blocked`.
-
-See [notebooks/README.md](notebooks/README.md) for exact notebook order and
-[REPRODUCIBILITY.md](REPRODUCIBILITY.md) for the evidence contract.
-The presentation-safe, artifact-bound result ledger is in
-[RESULTS.md](docs/RESULTS.md); slide-only observations are excluded from it.
-
-## How the team artifacts fit together
-
-The imported FT and sanity notebooks are source lineage, not canonical
-evaluation. The team synthetic-text generator is preserved as a sanitized
-reference, but its own `prompt.txt` and generated prompt artifact are absent
-here; it remains an unsealed candidate asset. The official upstream repository
-has a distinct synthetic-generator prompt, documented in the upstream audit.
-
-- [Team integration map and ownership](docs/TEAM_INTEGRATION_AND_ROADMAP.md)
-- [Upstream protocol audit](docs/UPSTREAM_AUDIT.md)
-- [Synthetic text-probe contract](docs/SYNTHETIC_TEXT_PROBES.md)
-- [Behavioral-review rubric](docs/BEHAVIORAL_REVIEW.md)
-- [Technical roadmap](docs/ROADMAP.md)
-- [Raj's working workbook](docs/raj_tonight_workbook.html)
-
-## Method scope
+Use only this persistent root for the active lane:
 
 ```text
-Frozen harmful-faces fine-tune role (1,500 records)  -> candidate M_ft
-Face-sanity bundle                                    -> candidate-adapter gate
-Construction-bound OOD broad-text + 250-distinct-image VQA reconstruction -> EM baseline gate
-Sealed extraction prompts                               -> paired shift vectors
-
-c_text        = mean(h_Mft - h_Mbase) at text-token positions
-c_image_token = mean(h_Mft - h_Mbase) at image-soft-token positions
+/content/drive/MyDrive/em-displacement-vlm-qwen2-5-vl-3b
 ```
 
-RQ1 measures both vectors in the **same Gemma language residual stream** at
-layers 20 and 32. A raw vision-tower vector is not directly comparable to a
-language residual vector, and shared-residual alignment is not evidence that a
-vision tower caused the behavior.
+The old Gemma seed-42 OOD path is not part of the active project. Its OOD
+notebooks were removed; historical Gemma modules and artifacts are retained as
+lineage only and are never mixed into Qwen evidence.
 
-Each primary run records the model and dataset revisions, ordered split hash,
-adapter fingerprint, prompt-manifest hashes, decoding settings, fixed
-evaluation seed, environment versions, paired judge/calibration evidence,
-three-seed review hashes, and bootstrap unit. Repeating prompts never turns a
-small template bank into more independent observations.
+## Current status
+
+- The Qwen model/config/runtime and candidate-training contracts are pinned.
+- The VLGuard parser, immutable role split, dynamic Qwen image-token capture,
+  masked layer-13 steering, equal-norm random control, resumable generation,
+  and refusal-ASR summary are implemented and locally unit-tested.
+- Actual Qwen optimizer execution and the VLGuard A100 causal run remain
+  `A100_UNRUN` until their Drive artifacts exist and validate.
+- The handed-off text figures (baseline 70, repair 58, random 77) are
+  `TEAM_REPORTED_UNVERIFIED`: their direction tensor and bound generation
+  package are not present on this repository's current public `main`.
+- Qwen BLOCK-EM, post-intervention re-discovery, and displacement remain
+  `DESIGN_ONLY`.
+
+Read [EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) before putting a number
+in a paper or presentation. Implementation is not a scientific result.
+
+## VLGuard causal screen
+
+The direction is computed in the Qwen language residual stream at layer 13:
+
+```text
+c_vis = unit(mean(pooled unsafe-image activations)
+             - mean(pooled safe-image activations))
+```
+
+Each activation is pooled only over processor-produced image placeholder
+positions. Direction images and validation images are disjoint. VLGuard
+provides safe/unsafe image **groups**, not semantically matched pairs, and the
+manifest records that limitation. Validation uses held-out unsafe images and
+their original unsafe instructions.
+
+The registered primary comparison is baseline versus repair along `-c_vis` at
+alpha 150, with alpha 80/250 sensitivities, equal-norm seeded random controls,
+and image-paired bootstrap intervals. The deterministic keyword refusal metric
+is a causal screen, not a human safety verdict. See
+[VLGUARD_VISION_VALIDATION.md](docs/VLGUARD_VISION_VALIDATION.md).
+
+## Frozen identities
+
+| Component | Identity |
+|---|---|
+| Base model | `Qwen/Qwen2.5-VL-3B-Instruct` |
+| Model revision | `66285546d2b821cf421d4f5eb2576359d3770cd3` |
+| VLGuard | `ys-zong/VLGuard` |
+| VLGuard revision | `b0be37a1ab7accb14e10d6a0ec3ce62cfaff2d46` |
+| Qwen runtime | `requirements/qwen-a100.lock` (Python 3.12, CUDA 12.8, A100) |
 
 ## Repository layout
 
 ```text
-em-displacement-vlm/
-├── src/em_displacement_vlm/
-│   ├── data/                  # immutable role manifests and contamination checks
-│   ├── ft/                    # Gemma/Qwen Unsloth candidate-adapter training
-│   ├── evals/                 # face sanity, OOD generation/judge/review contracts
-│   ├── rq1.py                 # production shared-language-residual RQ1 path
-│   ├── extraction/, interventions/
-│   │                          # generic TinyTwoTower smoke helpers, not Gemma science
-│   └── models/                # adapter persistence; load_model_bundle is Tiny-only
-├── protocols/                 # audited sources and machine-readable stage contract
-├── configs/                   # runnable base configs plus explicit design-only configs
-├── scripts/                   # builders, sealers, runners, review, and persistence
-├── notebooks/                 # canonical Colab notebooks and noncanonical references
-├── prompts/                   # judge rubric only; real prompt banks are external/sealed
-├── docs/                      # status, protocol, ownership, and roadmap
-└── tests/                     # local engineering checks
+src/em_displacement_vlm/
+  data/                    immutable faces-role construction
+  ft/                      Qwen BF16 LoRA runtime and trainer contracts
+  vision_validation.py     VLGuard parsing, capture, steering, and metrics
+  interventions/           smoke/design helpers; not production BLOCK-EM
+configs/                    frozen Qwen training and validation templates
+requirements/              hash-locked A100 environment
+scripts/                   preparation, training, validation, and provenance CLIs
+notebooks/                 canonical Qwen Colabs plus clearly labeled legacy tools
+protocols/workflow.yaml    machine-validated Qwen gate graph
+docs/                      runbooks, status, evidence boundaries
+tests/                     fail-closed engineering contracts
 ```
 
-The exact module-to-stage mapping and current implementation status are in
-[ARCHITECTURE_AND_WORKFLOW.md](docs/ARCHITECTURE_AND_WORKFLOW.md) and are
-validated from `protocols/workflow.yaml` in CI.
+## Local checks
 
-## Local engineering checks
-
-Python 3.11+ and [uv](https://github.com/astral-sh/uv) are sufficient for
-data-preparation and smoke checks; they do not reproduce the Gemma experiment.
-The setup script places the environment outside the repository and links it as
-`.venv`, avoiding iCloud `dataless` package placeholders on macOS.
+The macOS/local environment is for engineering checks, not A100 science:
 
 ```bash
 git clone https://github.com/rlogger/em-displacement-vlm.git
@@ -179,32 +122,27 @@ cd em-displacement-vlm
 source .venv/bin/activate
 uv sync --extra torch --extra vlm --extra dev
 
-python scripts/prepare_datasets.py
-python scripts/check_disjointness.py
 pytest -q
-python scripts/smoke_test.py --config configs/smoke.yaml
+ruff check src scripts tests
+python scripts/validate_workflow.py
 ```
 
-Those broad extras are the local engineering/processor environment, not the
-Unsloth training environment. Qwen A100 work must use
-[`requirements/qwen-a100.lock`](requirements/qwen-a100.lock) and the exact
-construction gate in the Qwen runbook.
+Actual Qwen runs must use the hash-locked A100 environment built by the Colabs.
+Large adapters, extracted images, directions, generation bundles, and review
+data belong on Drive or a controlled Hub repository, not in Git.
 
-Large adapters, activations, and response bundles belong on Drive or the Hub,
-not in git. Do not commit tokens, raw generated responses, or human-review
-mappings.
+## Sources
 
-## Sources and acknowledgments
-
-- Faces EM protocol and data preparation:
-  [idhantgulati/vlm-alignment](https://github.com/idhantgulati/vlm-alignment)
-- Team FT, sanity, and synthetic-generator source artifacts: documented under
-  [`notebooks/reference/`](notebooks/reference/)
-- EM-organism patterns:
-  [clarifying-EM/model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM)
-- Completion-only training patterns:
-  [google-gemini/gemma-cookbook](https://github.com/google-gemini/gemma-cookbook)
+- Qwen candidate model:
+  [`Qwen/Qwen2.5-VL-3B-Instruct`](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)
+- VLGuard dataset and schema:
+  [`ys-zong/VLGuard`](https://huggingface.co/datasets/ys-zong/VLGuard),
+  [official repository](https://github.com/ys-zong/VLGuard)
+- Narrow fine-tuning lineage:
+  [model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM)
+- BLOCK-EM method reference:
+  [ustaomeroglu/block-em](https://github.com/ustaomeroglu/block-em)
 
 ## License
 
-MIT. Harmful-content datasets and generated responses are research-only.
+MIT. Dataset licenses and access terms remain those of their original sources.

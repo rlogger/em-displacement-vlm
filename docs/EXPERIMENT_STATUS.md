@@ -1,82 +1,84 @@
 # Experiment status
 
-This file is an intentionally conservative status record. A green local test
-or a runnable notebook is not evidence of a completed scientific experiment.
+Last repository audit: 2026-08-20.
+
+## Active scientific status
 
 ```yaml
-status_schema: 1
-overall_claim_status: RESULT_UNVERIFIED
-as_of: "2026-08-19"
+project_focus: qwen2_5_vl_3b
+persistent_root: /content/drive/MyDrive/em-displacement-vlm-qwen2-5-vl-3b
 
-CODE_VERIFIED:
-  meaning: "Local engineering checks can validate code paths and artifact contracts."
-  evidence_required:
-    - "ruff, pytest, smoke test, lockfile, and notebook-JSON checks run successfully"
-  scientific_interpretation: "None; this is implementation validation only."
+qwen_candidate_training:
+  code_status: CODE_VERIFIED
+  runtime_status: A100_UNRUN
+  result_status: RESULT_UNVERIFIED
+  required_result: provenance-complete BF16 r32 adapter plus matched review
 
-A100_UNRUN:
-  meaning: >
-    No repository-tracked A100 package yet completes the full OOD EM gate
-    (matched generation + judge + two-reviewer calibration + three-seed seal).
-  still_missing_for_OOD_gate:
-    - "Drive-sealed paper_comparable_ood_v1.jsonl.meta.json before generation"
-    - "matched OOD generation bundles for seeds 42, 43, and 44"
-    - "bilateral blinded judge evidence with fixed evaluation randomness"
-    - "two-reviewer calibration, per-seed decisions, and the SHA-bound three-seed OOD gate"
-  note: >
-    Three public Gemma candidate adapters have immutable, reviewed face-sanity
-    summaries, and OOD *candidate pools* exist on Hub / Drive (see Durable
-    external artifacts). Those are candidate/input evidence, not an OOD EM result.
+text_causal_validation:
+  status: TEAM_REPORTED_UNVERIFIED
+  reported_only:
+    baseline_asr_percent: 70
+    primary_repair_asr_percent: 58
+    random_repair_asr_percent: 77
+  missing_from_public_main:
+    - bound direction tensor
+    - immutable generation bundle
+    - judge/config/runtime summary
+  scientific_interpretation: none until imported and replayed
 
-QWEN2_5_VL_G2:
-  meaning: >
-    The exact 3B model/config are pinned, the A100-targeted dependency graph is
-    resolver-validated and hash-locked, and local unit/processor contracts pass.
-    The real Unsloth model + LoRA + collator + trainer construction and every
-    optimizer step remain A100_UNRUN.
-  scientific_interpretation: "None; no Qwen adapter or behavioral evidence exists."
+vlguard_vision_validation:
+  code_status: CODE_VERIFIED
+  runtime_status: A100_UNRUN
+  result_status: RESULT_UNVERIFIED
+  registered_site: qwen language residual layer 13 at dynamic image-token positions
+  primary_alpha: 150
+  sensitivity_alphas: [80, 250]
+  required_controls: [baseline, equal_norm_seeded_random]
 
-RESULT_UNVERIFIED:
-  meaning: "No scientific conclusion may be reported from this repository snapshot."
-  prohibited_claims:
-    - "EM reproduced on Gemma 3-4B"
-    - "EM reproduced on Qwen2.5-VL 3B"
-    - "RQ1 shared or modality-specific geometry established"
-    - "BLOCK-EM removes or displaces behavior"
-  next_gate: >
-    Rehydrate/seal the paper-comparable OOD list on Drive, then produce matched
-    base/FT OOD packages across seeds 42, 43, and 44.
+qwen_blocking_and_displacement:
+  implementation_status: DESIGN_ONLY
+  runtime_status: A100_UNRUN
+  result_status: RESULT_UNVERIFIED
 ```
 
-## Durable external artifacts (team Colab / Hub · Aug 2026)
+`CODE_VERIFIED` means local unit/contract tests pass. It never means that a
+model was trained or that a causal effect was observed.
 
-These are **not** committed in git. They support engineering handoff and do
-**not** clear `RESULT_UNVERIFIED`.
+## What is no longer active
 
-| Artifact | Location | Status |
-|---|---|---|
-| Candidate LoRA `r=32` seeds 42/43/44 | Drive `checkpoints/FT_R32_gemma3_faces_seed{SEED}/`; public Hub `rlogger/FT_R32_gemma3_faces_seed{SEED}` at revisions recorded in `protocols/external_artifacts.yaml` | Built; immutable Hub packages include passed candidate face-sanity summaries. See `docs/RESULTS.md`; this is not OOD EM. |
-| Base model for comparison | Public `unsloth/gemma-3-4b-it` @ `bf46152c47f5dd20b896357cb51abc4c03b8ee8c` | Not re-hosted by this project |
-| Public VQA reconstruction pool | Hub dataset `rlogger/ood-vqa-mscoco-paper-comparable` @ `4a71750a2b7a30d76abbd7ebc4cc9dd0e03d74a0` | 400-row public pool with pinned Parquet hash; candidate input, not sealed evaluation. |
-| Combined VQA + text OOD candidate pool | Private Hub dataset `rlogger/ood-candidates-paper-comparable-v1`; Drive `data/ood/` when present | Authentication required; revision and file hashes remain unimported into the public ledger. |
-| Unreviewed / sealed eval list | Drive `data/ood/paper_comparable_ood_v1.jsonl` (+ `.meta.json` after notebook 03 seal) | Remake from Hub pools with the same selection seed if Drive copies are missing |
-| Matched OOD generation / three-seed gate | Drive `results/ood/` | Not completed |
+The Gemma seed-42 OOD experiment and its notebook are not part of the current
+project. The OOD baseline and OOD-pool-builder Colabs were removed from the
+repository. Historical Gemma adapters, modules, and external artifacts remain
+lineage only; this repository change did not delete anything from Drive or the
+Hugging Face Hub.
 
-Colab helpers: `scripts/colab_push_seed42_adapter.py`,
-`scripts/colab_push_all_seed_adapters.py`.
+## Evidence required for a reportable vision result
 
-## What changes the status
+The strongest allowed label before all items exist is `RESULT_UNVERIFIED`.
 
-| Transition | Required durable evidence |
+| Required item | Current repository state |
 |---|---|
-| `A100_UNRUN` → candidate-adapter evidence | For each seed: immutable split manifest, run/environment manifest, completed adapter, matched face-sanity bundles, blinded review sheet/mapping, review summary, and linked adapter provenance. This is not OOD EM evidence. |
-| Candidate-adapter evidence → OOD baseline | A sealed 150-text/250-VQA reconstruction; matched base/FT bundles with fixed evaluation randomness; bilateral blinded scoring; paired/clustered uncertainty; two-reviewer calibration; and explicit per-seed decisions. |
-| OOD baseline → RQ1 evidence | The SHA-bound passed three-seed OOD gate, ≥50 unique reviewed primary/control prompts, the exact selected adapter/split package, and a pre-specified primary analysis config. |
-| RQ1 evidence → intervention evidence | Three-seed RQ1 package, implemented Gemma intervention, and primary/random/wrong-layer controls. |
-| Intervention evidence → displacement conclusion | Matched re-probes, capability controls, and re-discovery that distinguish removal from relocation. |
-| Later · distribution stress-test | Pre-specified Dist B + Block-EM transfer / re-discovery (roadmap G8–G9); design-only until intervention exists. |
+| Exact Qwen adapter identity/revision/seed and content fingerprint | Validator implemented; no run artifact checked in |
+| Pinned VLGuard revision and accepted access terms | Revision registered; gated download requires the user's token |
+| Hash-sealed disjoint direction and validation roles | Builder/validator implemented; Drive manifest not yet produced |
+| Unit layer-13 direction and equal-norm random tensor | Capture/save/replay implemented; A100 artifact absent |
+| Complete baseline/repair/random bundle | Row-resumable runner implemented; A100 artifact absent |
+| Primary alpha-150 refusal-ASR comparison | Summary implementation exists; no measured summary yet |
+| Human review or a stronger judge | Not part of the current keyword-screen gate |
 
-Record a negative, mixed, or inconclusive result with the same care as a
-positive one. See [REPRODUCIBILITY.md](../REPRODUCIBILITY.md) for required
-fields and [TEAM_INTEGRATION_AND_ROADMAP.md](TEAM_INTEGRATION_AND_ROADMAP.md)
-for ownership.
+Once the A100 run completes, it may be described narrowly as a
+`MEASURED_VLGUARD_KEYWORD_SCREEN`. It must name the model, adapter, manifest,
+commit, layer, alpha, random control, and keyword judge. It must not be called a
+human safety result, successful BLOCK-EM, or displacement.
+
+## Next executable step
+
+1. Run `notebooks/01q_reproduce_mft_qwen2_5_vl_3b.ipynb` on A100 if the Qwen
+   adapter does not already exist under the dedicated Drive root.
+2. Complete the matched Qwen candidate review described in
+   `docs/QWEN2_5_VL_BASELINE.md`.
+3. Run `notebooks/02q_vlguard_vision_validation.ipynb` on A100.
+4. Preserve `run_metadata.json`, `directions.safetensors`,
+   `direction_metadata.json`, `generations.jsonl`, and `summary.json` together.
+5. Only after reviewing that package, specify and implement the production Qwen
+   BLOCK-EM gate.

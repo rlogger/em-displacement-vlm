@@ -592,8 +592,9 @@ def test_colab_notebooks_stream_long_running_script_output():
     long_running = {
         "01_reproduce_mft_gemma3.ipynb": ("ft_faces.py", "sanity_check_em.py"),
         "02_review_candidate_adapter.ipynb": ("sanity_check_em.py", "extract_rq1.py"),
-        "03_ood_em_baseline.ipynb": ("evaluate_ood_em.py",),
         "04_rq1_shared_residual_geometry.ipynb": ("extract_rq1.py",),
+        "01q_reproduce_mft_qwen2_5_vl_3b.ipynb": ("ft_faces.py",),
+        "02q_vlguard_vision_validation.ipynb": ("validate_vlguard_vision.py",),
     }
     for notebook_name, scripts in long_running.items():
         notebook = json.loads((root / "notebooks" / notebook_name).read_text())
@@ -604,7 +605,8 @@ def test_colab_notebooks_stream_long_running_script_output():
             assert f"check_call([sys.executable, 'scripts/{script}'" not in source, (
                 f"{notebook_name} hides {script} output behind check_call"
             )
-            assert f'"scripts/{script}", "--config"' in source
+            assert f"scripts/{script}" in source
+            assert "subprocess.Popen" in source
         assert source.count("stderr=subprocess.STDOUT") >= len(scripts)
 
 

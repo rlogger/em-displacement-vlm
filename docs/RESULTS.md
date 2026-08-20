@@ -1,5 +1,10 @@
 # Artifact-bound results ledger
 
+> **Active Qwen status (2026-08-20): `RESULT_UNVERIFIED`.** No Qwen optimizer
+> package or VLGuard A100 summary is yet bound here. The verified entries below
+> are retained historical Gemma candidate evidence and do not satisfy any active
+> Qwen gate.
+
 As of 2026-08-19, the repository has three immutable, publicly inspectable
 Gemma 3 candidate-adapter face-sanity reviews. These are real matched
 base-versus-FT results on held-out face-domain probes. They are **not** an
@@ -58,7 +63,8 @@ pinned input.
 | Gemma candidate face sanity | `ARTIFACT_VERIFIED_PUBLIC` for seeds 42/43/44 | The face fine-tune produces a large reviewed same-domain base→FT behavioral shift in all three candidate packages. |
 | Paper-comparable OOD EM | Missing sealed matched generation, calibrated per-seed reviews, and three-seed gate | No OOD EM reproduction result yet. |
 | Primary RQ1 geometry | Blocked by OOD gate | No verified shared/modality-specific geometry result yet. |
-| Qwen2.5-VL 3B | Runtime/config lane only; A100 optimizer step unrun | No Qwen adapter or behavioral result yet. |
+| Qwen2.5-VL 3B candidate | Runtime/config lane only; A100 optimizer step unrun | No Qwen adapter or behavioral result yet. |
+| Qwen VLGuard vision screen | Parser/capture/steering/result contracts locally verified; A100 run absent | No measured Qwen vision-pathway causal result yet. |
 | BLOCK-EM / displacement | No production VLM intervention package | No blocking, removal, rerouting, or displacement result yet. |
 
 ## Presentation/deck boundary
