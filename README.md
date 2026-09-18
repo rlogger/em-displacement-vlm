@@ -52,26 +52,6 @@ The old Gemma seed-42 OOD path is not part of the active project. Its OOD
 notebooks were removed; historical Gemma modules and artifacts are retained as
 lineage only and are never mixed into Qwen evidence.
 
-## Current status
-
-- The Qwen model/config/runtime and candidate-training contracts are pinned.
-- The VLGuard parser, immutable role split, dynamic Qwen image-token capture,
-  masked layer-13 steering, equal-norm random control, resumable generation,
-  and refusal-ASR summary are implemented and locally unit-tested.
-- Actual Qwen optimizer execution and the VLGuard A100 causal run remain
-  `A100_UNRUN` until their Drive artifacts exist and validate.
-- The handed-off text figures (baseline 70, repair 58, random 77) are
-  `TEAM_REPORTED_UNVERIFIED`: their direction tensor and bound generation
-  package are not present on this repository's current public `main`.
-- Step 3 is `BLOCKED_MISSING_TEXT_PACKAGE`. Its runner must fail closed until a
-  Qwen text package and the VLGuard vision package replay against the same
-  reviewed adapter, layer, site, and held-out evaluation manifest.
-- Qwen BLOCK-EM, post-intervention re-discovery, and displacement remain
-  `DESIGN_ONLY`.
-
-Read [EXPERIMENT_STATUS.md](docs/EXPERIMENT_STATUS.md) before putting a number
-in a paper or presentation. Implementation is not a scientific result.
-
 ## VLGuard causal screen
 
 The direction is computed in the Qwen language residual stream at layer 13:
@@ -92,21 +72,6 @@ alpha 150, with alpha 80/250 sensitivities, equal-norm seeded random controls,
 and image-paired bootstrap intervals. The deterministic keyword refusal metric
 is a causal screen, not a human safety verdict. See
 [VLGUARD_VISION_VALIDATION.md](docs/VLGUARD_VISION_VALIDATION.md).
-
-## Step 3 cross-pathway comparison
-
-Step 3 first measures signed geometry between `c_text` and `c_vis` at the exact
-same Qwen layer-13 decoder-block output. It then reuses one common held-out
-VLGuard set for baseline, all four direction/site cells, the simultaneous
-own-path-both arm, and matched same-site random controls. This is necessary:
-putting independently produced text and vision ASR numbers side by side is not
-a controlled cross-pathway comparison.
-
-Alpha 150 is primary. Unit normalization makes the two directions comparable
-within a token site, but different text/image token counts mean raw effects
-across sites are not evidence that one pathway is stronger. The keyword judge
-remains a screen, and the missing text package currently blocks execution. See
-[QWEN_CROSS_PATHWAY_COMPARISON.md](docs/QWEN_CROSS_PATHWAY_COMPARISON.md).
 
 ## Frozen identities
 
@@ -155,18 +120,6 @@ python scripts/validate_workflow.py
 Actual Qwen runs must use the hash-locked A100 environment built by the Colabs.
 Large adapters, extracted images, directions, generation bundles, and review
 data belong on Drive or a controlled Hub repository, not in Git.
-
-## Sources
-
-- Qwen candidate model:
-  [`Qwen/Qwen2.5-VL-3B-Instruct`](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct)
-- VLGuard dataset and schema:
-  [`ys-zong/VLGuard`](https://huggingface.co/datasets/ys-zong/VLGuard),
-  [official repository](https://github.com/ys-zong/VLGuard)
-- Narrow fine-tuning lineage:
-  [model-organisms-for-EM](https://github.com/clarifying-EM/model-organisms-for-EM)
-- BLOCK-EM method reference:
-  [ustaomeroglu/block-em](https://github.com/ustaomeroglu/block-em)
 
 ## License
 
