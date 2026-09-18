@@ -1,6 +1,6 @@
 # Qwen2.5-VL Emergent Misalignment and Cross-Pathway Validation
 
-Publication-oriented research code for training a Qwen2.5-VL candidate,
+Training a Qwen2.5-VL candidate,
 constructing a VLGuard image-derived direction, and comparing text/vision
 directions in one shared residual space and held-out causal screen before a
 future BLOCK-EM experiment.
